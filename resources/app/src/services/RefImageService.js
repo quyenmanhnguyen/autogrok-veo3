@@ -146,13 +146,21 @@ class RefImageService {
     }
 
     /**
-     * Build request body for ref image generation (imagine-image-edit model)
-     * Now includes enableNsfw, enablePro, and correct imageGenerationCount
+     * Build request body for ref image generation (imagine-image-edit model).
+     *
+     * Body shape verified by capturing the outbound POST that grok.com/imagine
+     * sends when editing a reference image. Web sends only the fields below —
+     * no enableNsfw, no enablePro, no toolOverrides. We mirror the web payload
+     * exactly to avoid the server silently bypassing the ref-edit pipeline
+     * because of unrecognized fields.
      */
     buildRefImageBody(prompt, imageUrls, parentPostId, config = {}) {
-        const imageCount = config.imageGenerationCount || config.count || IMAGE_CONFIG.imageGenerationCount || 4;
-        const enableNsfw = config.enableNsfw === false ? false : true;
-        const enablePro = config.enablePro !== false ? true : false;
+        // Web defaults to 2 for ref-edit; respect caller override but cap to 4
+        // since the server has been observed to ignore higher counts here.
+        const imageCount = Math.min(
+            config.imageGenerationCount || config.count || 2,
+            4
+        );
         return {
             temporary: true,
             modelName: MODEL_CONFIG.REF_IMAGE_MODEL,
@@ -163,21 +171,18 @@ class RefImageService {
             enableImageStreaming: true,
             imageGenerationCount: imageCount,
             forceConcise: false,
-            toolOverrides: { imageGen: true },
             enableSideBySide: true,
-            enableNsfw,
-            enablePro,
             sendFinalMetadata: true,
             isReasoning: false,
             disableTextFollowUps: true,
             responseMetadata: {
                 modelConfigOverride: {
                     modelMap: {
+                        imageEditModel: 'imagine',
                         imageEditModelConfig: {
                             imageReferences: imageUrls,
                             parentPostId: parentPostId,
                         },
-                        imageEditModel: 'imagine',
                     },
                 },
             },
@@ -657,10 +662,14 @@ class RefImageService {
                 }
                 if (uploadResult.error) return { imageUrls: [], imageBase64: [], error: uploadResult.error, status: 0 };
 
-                // PRIMARY: WebSocket generation (bypass CDN moderation blur)
-                if (session._page) {
+                // NOTE: grok.com/imagine sends ref-edit requests via REST chat
+                // (verified by capturing the outbound POST). The Imagine WS
+                // endpoint does not accept ref-image properties, so we skip it
+                // here to avoid the ~30s round trip waiting for WS to time out.
+                // To re-enable for experimentation, set config.useRefWebSocket = true.
+                if (config.useRefWebSocket && session._page) {
                     try {
-                        console.log(`[RefImageService] 🔌 Trying WS generation (anti-blur)...`);
+                        console.log(`[RefImageService] 🔌 Trying WS generation (experimental)...`);
                         const wsResult = await this.generateViaWebSocket(
                             prompt, uploadResult.imageUrls, uploadResult.parentPostId, session, config
                         );
@@ -675,7 +684,7 @@ class RefImageService {
                     }
                 }
 
-                // FALLBACK: REST API
+                // PRIMARY: REST chat (matches the verified grok.com/imagine flow)
                 console.log(`[RefImageService] 🎨 REST generating with ${uploadResult.imageUrls.length} ref(s): ${prompt.substring(0, 50)}...`);
                 const cookieStr = this.formatCookies(session.cookies);
                 const body = this.buildRefImageBody(prompt, uploadResult.imageUrls, uploadResult.parentPostId, config);
