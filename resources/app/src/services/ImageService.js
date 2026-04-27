@@ -140,7 +140,7 @@ class ImageService {
 
             const wsResult = await page.evaluate(async (prompt, aspectRatio, n, enableNsfw, enablePro) => {
                 const WS_URL = 'wss://grok.com/ws/imagine/listen';
-                const URL_PATTERN = /\/images\/([a-f0-9-]+)\.(png|jpg|jpeg)/i;
+                const URL_PATTERN = /\/images\/([a-f0-9-]+)\.(png|jpe?g|webp)/i;
                 const ROUND_TIMEOUT_MS = 120000;
                 const STREAM_IDLE_MS = 30000;
                 const INTER_ROUND_GRACE_MS = 2000;
@@ -198,8 +198,33 @@ class ImageService {
                 let slots = new Map();   // image_id -> slot
                 let roundIdleTimer = null;
                 let overallTimer = null;
+                let finished = false;
+
+                function harvestPartialFinals() {
+                    // Promote any slot with a buffered blob but no `completed` frame into
+                    // a final image. Safe to call multiple times — `seenFinals` guards dupes.
+                    for (const slot of slots.values()) {
+                        if (!slot.done && slot.last_blob && !seenFinals.has(slot.image_id)) {
+                            seenFinals.add(slot.image_id);
+                            finals.push({
+                                blob: slot.last_blob,
+                                url: slot.last_url,
+                                image_id: slot.image_id,
+                                order: slot.order,
+                                moderated: false,
+                                r_rated: false,
+                            });
+                        }
+                    }
+                }
 
                 function finish(reason) {
+                    if (finished) return;
+                    finished = true;
+                    // IMPORTANT: harvest synchronously before resolving — `ws.onclose` fires
+                    // on a later event-loop turn and can't reach the caller after `page.evaluate`
+                    // has already serialized the result.
+                    harvestPartialFinals();
                     debug.push('finish: ' + reason + ' | finals=' + finals.length);
                     try { ws.close(); } catch (_) {}
                     if (roundIdleTimer) clearInterval(roundIdleTimer);
@@ -208,6 +233,7 @@ class ImageService {
                 }
 
                 function startRound() {
+                    if (finished) return;
                     roundIdx++;
                     roundStartedAt = Date.now();
                     lastFrameAt = Date.now();
@@ -226,6 +252,7 @@ class ImageService {
                 }
 
                 function maybeAdvance() {
+                    if (finished) return;
                     if (finals.length >= n) {
                         finish('got_enough');
                         return;
@@ -237,10 +264,9 @@ class ImageService {
                         }
                         // Wait briefly to let server close (single-round servers do).
                         setTimeout(() => {
-                            if (ws.readyState === WebSocket.OPEN) {
-                                debug.push('all slots done, requesting another round');
-                                startRound();
-                            }
+                            if (finished || ws.readyState !== WebSocket.OPEN) return;
+                            debug.push('all slots done, requesting another round');
+                            startRound();
                         }, INTER_ROUND_GRACE_MS);
                     }
                 }
@@ -316,20 +342,6 @@ class ImageService {
                         const message = msg.err_msg || JSON.stringify(msg);
                         errors.push(code + ': ' + message);
                         debug.push('server error: ' + code);
-                        // Best-effort: emit any buffered slots before exiting.
-                        for (const slot of slots.values()) {
-                            if (!slot.done && slot.last_blob && !seenFinals.has(slot.image_id)) {
-                                seenFinals.add(slot.image_id);
-                                finals.push({
-                                    blob: slot.last_blob,
-                                    url: slot.last_url,
-                                    image_id: slot.image_id,
-                                    order: slot.order,
-                                    moderated: false,
-                                    r_rated: false,
-                                });
-                            }
-                        }
                         finish('server_error');
                     }
                 };
@@ -340,20 +352,6 @@ class ImageService {
 
                 ws.onclose = (event) => {
                     debug.push('ws closed code=' + event.code);
-                    // Best-effort: any slots with a buffered blob become finals.
-                    for (const slot of slots.values()) {
-                        if (!slot.done && slot.last_blob && !seenFinals.has(slot.image_id)) {
-                            seenFinals.add(slot.image_id);
-                            finals.push({
-                                blob: slot.last_blob,
-                                url: slot.last_url,
-                                image_id: slot.image_id,
-                                order: slot.order,
-                                moderated: false,
-                                r_rated: false,
-                            });
-                        }
-                    }
                     finish('ws_close');
                 };
 
