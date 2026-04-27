@@ -193,7 +193,7 @@ class ImageService {
                 const outer = new Promise(r => { resolveOuter = r; });
 
                 let roundIdx = 0;
-                let roundStartedAt = 0;
+                let roundStartedAt = Date.now();
                 let lastFrameAt = Date.now();
                 let slots = new Map();   // image_id -> slot
                 let roundIdleTimer = null;
