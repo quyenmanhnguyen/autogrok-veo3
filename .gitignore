@@ -34,6 +34,21 @@ vk_swiftshader_icd.json
 *.zip
 *.tar.gz
 *.7z
+*.ico
 LICENSES.chromium.html
 LICENSE.electron.txt
 resources/bin/
+
+# Generated / output images
+ref-images/
+screenshot_test.png
+
+# Temp patch & debug scripts
+resources/app/patch-*.js
+resources/app/debug-*.js
+resources/app/dist/refimg-*.txt
+resources/app/dist/renderer.original.js
+resources/app/package-lock.json
+
+# Session / Crashpad data
+resources/app/sessions/

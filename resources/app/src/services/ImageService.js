@@ -56,9 +56,13 @@ class ImageService {
     buildBody(prompt, config = {}) {
         const aspectRatio = config.aspectRatio || '1:1';
         const imageCount = config.imageGenerationCount || config.count || IMAGE_CONFIG.imageGenerationCount || 2;
+        const enableNsfw = config.enableNsfw === false ? false : true;
+        const enablePro = config.enablePro !== false ? true : false;
         return {
             temporary: false,
             modelName: 'grok-3',
+            // Pin photorealistic model for chat-stream fallback path too
+            imageModelName: 'imagine-x-1',
             message: prompt.includes('--ar') ? prompt : `${prompt} --ar ${aspectRatio}`,
             fileAttachments: [],
             imageAttachments: [],
@@ -71,6 +75,8 @@ class ImageService {
             forceConcise: false,
             toolOverrides: {},
             enableSideBySide: true,
+            enableNsfw,
+            enablePro,
             sendFinalMetadata: true,
             isReasoning: false,
             disableTextFollowUps: false,
@@ -404,19 +410,7 @@ class ImageService {
                 console.log('[ImageService] 🔌 WS debug:\n  ' + wsResult.debug.join('\n  '));
             }
 
-            // File-based debug log (captures WS result even without DevTools)
-            try {
-                const fs = require('fs');
-                const debugDir = path.join(path.dirname(require.resolve('../config/app.config')), '..', '..', 'debug');
-                fs.mkdirSync(debugDir, { recursive: true });
-                fs.writeFileSync(path.join(debugDir, 'wsDebug_' + Date.now() + '.json'), JSON.stringify({
-                    finalsCount: (wsResult.finals || []).length,
-                    errorsCount: (wsResult.errors || []).length,
-                    errors: wsResult.errors || [],
-                    debug: wsResult.debug || [],
-                    finalsPreview: (wsResult.finals || []).map(f => ({ image_id: f.image_id, order: f.order, moderated: f.moderated, blob_len: (f.blob || '').length, url: f.url })),
-                }, null, 2), 'utf8');
-            } catch(e) { /* ignore */ }
+            // WS debug summary (console only — no file writes in production)
 
             const finals = wsResult.finals || [];
             console.log('[ImageService] 🔌 WS finals: ' + finals.length + ' (errors: ' + (wsResult.errors || []).length + ')');
@@ -858,36 +852,9 @@ class ImageService {
                     }
                 }
 
-                // Debug: dump full response
                 const rawText = typeof res.data === 'string' ? res.data : JSON.stringify(res.data);
                 const allLines = rawText.split('\n').filter(l => l.trim());
-                console.log(`[ImageService] ðŸ“¥ RESPONSE: HTTP ${res.status} | ${rawText.length} bytes | ${allLines.length} lines`);
-
-                // Dump raw response to debug file
-                try {
-                    const fs = require('fs');
-                    const debugDir = path.join(path.dirname(require.resolve('../config/app.config')), '..', '..', 'debug');
-                    fs.mkdirSync(debugDir, { recursive: true });
-                    fs.writeFileSync(path.join(debugDir, `response_${Date.now()}.txt`), `HTTP ${res.status}\n\n${rawText}`, 'utf8');
-                    console.log('[ImageService] DEBUG: Saved raw response to debug/');
-                } catch (e) { console.log('[ImageService] DEBUG save failed: ' + e.message); }
-
-                // Show lines containing image URLs
-                for (let i = 0; i < allLines.length; i++) {
-                    const line = allLines[i];
-                    if (line.includes('imageUrl') || line.includes('generatedImage') ||
-                        line.includes('imagine') || line.includes('Bytes') ||
-                        line.includes('base64') || line.includes('data:image')) {
-                        console.log(`[ImageService] ðŸ“¥ IMAGE LINE #${i}: ${line.substring(0, 500)}`);
-                    }
-                    if (line.length > 5000) {
-                        console.log(`[ImageService] ðŸ“¥ BIG LINE #${i} (${line.length} chars)`);
-                    }
-                }
-
-                // Show last 2000 chars (where image URLs typically appear)
-                console.log(`[ImageService] ðŸ“¥ RESPONSE END:\n${rawText.substring(Math.max(0, rawText.length - 2000))}`);
-
+                console.log('[ImageService] Axios fallback: HTTP ' + res.status + ' | ' + rawText.length + ' bytes | ' + allLines.length + ' lines');
 
                 // Parse response
                 const result = this.parseResponse(res.data, res.status);
@@ -1139,33 +1106,24 @@ class ImageService {
         // On grok.com, the web client constructs final URLs from imageUuid.
         // When moderated=true at progress=100, server omits imageUrl.
         // We use the partial URL (from progress=50) and strip -part-N to get final.
-        console.log('[ImageService] imageChunkMap size:', imageChunkMap.size);
         for (const [uuid, info] of imageChunkMap) {
-            console.log('[ImageService] UUID:', uuid, 'progress:', info.progress, 'moderated:', info.moderated, 'imageUrl:', info.imageUrl ? info.imageUrl.substring(0, 80) : 'NONE');
             if (info.progress >= 100 && info.imageUrl) {
                 if (info.moderated) {
                     // Moderated: server DELETES final image. Use part-0 URL with session cookies
-                    console.log('[ImageService] UUID ' + uuid + ': moderated=true, using part-0 URL');
+                    console.log('[ImageService] UUID ' + uuid.substring(0,8) + ': moderated, using part-0 URL');
                     this.pushUniqueImageUrl(result, info.imageUrl, info.imageIndex != null ? info.imageIndex : null);
                 } else {
                     // Not moderated: strip -part-N to get final full-resolution URL
                     const finalUrl = info.imageUrl.replace(/-part-\d+\//, '/');
-                    console.log('[ImageService] UUID ' + uuid + ': final URL resolved');
                     this.pushUniqueImageUrl(result, finalUrl, info.imageIndex != null ? info.imageIndex : null);
                 }
             } else if (info.progress >= 100 && !info.imageUrl) {
-                console.warn('[ImageService] UUID ' + uuid + ': progress=100 but no URL captured');
+                console.warn('[ImageService] UUID ' + uuid.substring(0,8) + ': progress=100 but no URL');
             }
         }
 
-        // DEBUG: dump parseResponse results
-        try {
-            const fs = require('fs');
-            const debugDir = require('path').join(require('path').dirname(require.resolve('../config/app.config')), '..', '..', 'debug');
-            const debugObj = { imageChunkMapSize: imageChunkMap.size, imageChunkMap: Object.fromEntries(imageChunkMap), imageUrlsCount: result.imageUrls.length, imageBase64Count: result.imageBase64.length, imageUrls: result.imageUrls, title: result.title };
-            fs.writeFileSync(require('path').join(debugDir, 'parseResult_' + Date.now() + '.json'), JSON.stringify(debugObj, null, 2), 'utf8');
-            console.log('[ImageService] DEBUG: parseResult saved');
-        } catch(e) { console.log('[ImageService] DEBUG parseResult save failed: ' + e.message); }
+        // parseResponse summary
+        console.log(`[ImageService] parseResponse: ${result.imageUrls.length} URLs, ${result.imageBase64.length} base64, chunkMap=${imageChunkMap.size}`);
 
         const totalImages = result.imageUrls.length + result.imageBase64.length;
         if (totalImages === 0) {
@@ -1375,17 +1333,12 @@ class ImageService {
                 const batchTs = Date.now().toString(36);
                 const titleSlug = (result.title || '').replace(/[^a-zA-Z0-9\u00C0-\u024F\u1E00-\u1EFF ]/g, '').trim().replace(/\s+/g, '_').substring(0, 60);
 
-                // DEBUG: log save attempt details to file
-                const _debugSave = { shotNum, titleSlug, outputFolder, base64Count: (result.imageBase64 || []).length, urlCount: (result.imageUrls || []).length, error: result.error, saved: [] };
-                try {
-                    const _fs = require('fs');
-                    const _debugDir = path.join(path.dirname(require.resolve('../config/app.config')), '..', '..', 'debug');
-                    _fs.mkdirSync(_debugDir, { recursive: true });
-                    _fs.writeFileSync(path.join(_debugDir, 'saveDebug_' + Date.now() + '.json'), JSON.stringify(_debugSave, null, 2), 'utf8');
-                } catch(_e) {}
-
                 if ((result.imageBase64 || []).length > 0) {
-                    for (const img of result.imageBase64) {
+                    // Track used filenames within this shot to avoid collisions
+                    // when multiple images share the same order/imageIndex.
+                    const usedNames = new Set();
+                    for (let imgIdx = 0; imgIdx < result.imageBase64.length; imgIdx++) {
+                        const img = result.imageBase64[imgIdx];
                         try {
                             let base64Data = img.data;
                             let ext = 'png';
@@ -1397,25 +1350,27 @@ class ImageService {
                                 }
                             }
                             const buffer = Buffer.from(base64Data, 'base64');
-                            const filename = titleSlug ? `shot${shotNum}_${batchTs}_${titleSlug}_i${img.imageIndex || 0}.${ext}` : `shot${shotNum}_${batchTs}_i${img.imageIndex || 0}.${ext}`;
+                            // Use sequential imgIdx as fallback to guarantee unique names
+                            const imgNum = img.imageIndex != null ? img.imageIndex : imgIdx;
+                            let filename = titleSlug
+                                ? `shot${shotNum}_${batchTs}_${titleSlug}_i${imgNum}.${ext}`
+                                : `shot${shotNum}_${batchTs}_i${imgNum}.${ext}`;
+                            // If this name was already used (duplicate order), append loop index
+                            if (usedNames.has(filename)) {
+                                filename = titleSlug
+                                    ? `shot${shotNum}_${batchTs}_${titleSlug}_i${imgIdx}.${ext}`
+                                    : `shot${shotNum}_${batchTs}_i${imgIdx}.${ext}`;
+                            }
+                            usedNames.add(filename);
                             const filePath = FileService.saveFile(buffer, filename, outputFolder);
                             savedFiles.push(filePath);
                             img.size = buffer.length;
-                            _debugSave.saved.push({ filename, size: buffer.length, path: filePath });
                             console.log(`[ImageService] [${label}] 💾 Saved base64 image: ${filename} (${buffer.length} bytes)`);
                         } catch (error) {
-                            _debugSave.saved.push({ error: error.message, stack: error.stack });
                             console.error(`[ImageService] [${label}] Base64 save error:`, error.message);
                         }
                     }
                 }
-
-                // Update debug file with save results
-                try {
-                    const _fs2 = require('fs');
-                    const _debugDir2 = path.join(path.dirname(require.resolve('../config/app.config')), '..', '..', 'debug');
-                    _fs2.writeFileSync(path.join(_debugDir2, 'saveResult_' + Date.now() + '.json'), JSON.stringify(_debugSave, null, 2), 'utf8');
-                } catch(_e2) {}
 
                 const bestBase64Size = savedFiles.length > 0 ? Math.max(...(result.imageBase64 || []).map(i => i.size || 0), 0) : 0;
                 if ((result.imageUrls || []).length > 0 && bestBase64Size < 50000) {
@@ -1435,7 +1390,8 @@ class ImageService {
                             }
                             if (dl && dl.size > bestBase64Size) {
                                 const ext = dl.contentType?.includes('png') ? 'png' : 'jpg';
-                                const filename = titleSlug ? `shot${shotNum}_${batchTs}_${titleSlug}_i${img.imageIndex || 0}.${ext}` : `shot${shotNum}_${batchTs}_i${img.imageIndex || 0}.${ext}`;
+                                const cdnIdx = img.imageIndex || 0;
+                                const filename = titleSlug ? `shot${shotNum}_${batchTs}_${titleSlug}_cdn_i${cdnIdx}.${ext}` : `shot${shotNum}_${batchTs}_cdn_i${cdnIdx}.${ext}`;
                                 const filePath = FileService.saveFile(dl.data, filename, outputFolder);
                                 savedFiles.push(filePath);
                                 console.log(`[ImageService] [${label}] 💾 Saved URL image: ${filename} (${dl.size} bytes)`);
