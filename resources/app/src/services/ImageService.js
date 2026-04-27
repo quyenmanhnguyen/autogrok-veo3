@@ -137,7 +137,7 @@ class ImageService {
         const aspectRatio = config.aspectRatio || '1:1';
         const imageCount = config.imageGenerationCount || config.count || IMAGE_CONFIG.imageGenerationCount || 2;
         const enableNsfw = config.enableNsfw === false ? false : true;
-        const enablePro = !!config.enablePro;
+        const enablePro = config.enablePro !== false ? true : false; // default ON for quality
 
         try {
             // The websocket connects from the page origin, so we must be on grok.com.
