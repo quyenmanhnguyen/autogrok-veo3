@@ -94,6 +94,350 @@ class ImageService {
     }
 
     /**
+     * Generate images via the Grok Imagine WebSocket (`wss://grok.com/ws/imagine/listen`).
+     *
+     * This is what grok.com web actually uses for image generation. Unlike
+     * `POST /rest/app-chat/conversations/new`:
+     *   - One round can produce multiple side-by-side images (`enable_side_by_side: true`),
+     *     fixing the "imageGenerationCount has no effect" issue on the chat endpoint.
+     *   - Image bytes arrive inline as base64 `blob` fields on the websocket itself,
+     *     so they bypass the CDN moderation that turns final images into ~25KB
+     *     blurred placeholders.
+     *
+     * Protocol (one round):
+     *   Client → reset:    {type:"conversation.item.create", item:{...content:[{type:"reset"}]}}
+     *   Client → request:  {type:"conversation.item.create", item:{...content:[{
+     *                          requestId, text, type:"input_text",
+     *                          properties:{section_count, is_kids_mode, enable_nsfw,
+     *                                      skip_upsampler, enable_side_by_side,
+     *                                      is_initial, aspect_ratio, enable_pro}}]}}
+     *   Server → for each slot:
+     *              {type:"json", current_status:"start_stage", image_id, order, width, height}
+     *              N × {type:"image", url:"/images/<id>.jpg", blob:"<base64>", percentage_complete:N}
+     *              {type:"json", current_status:"completed", image_id, moderated, r_rated}
+     *
+     * If a slot finishes with `moderated: true` the corresponding URL on the CDN
+     * will be blurred — but the last `blob` we already buffered from the streaming
+     * preview frames is full-res, so we keep that.
+     */
+    async generateViaWebSocket(prompt, session, config = {}) {
+        if (!session._page) return null;
+        const page = session._page;
+
+        const aspectRatio = config.aspectRatio || '1:1';
+        const imageCount = config.imageGenerationCount || config.count || IMAGE_CONFIG.imageGenerationCount || 2;
+        const enableNsfw = config.enableNsfw === false ? false : true;
+        const enablePro = !!config.enablePro;
+
+        try {
+            // The websocket connects from the page origin, so we must be on grok.com.
+            const currentUrl = page.url();
+            if (!currentUrl.includes('grok.com')) {
+                await page.goto('https://grok.com/', { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {});
+            }
+
+            console.log('[ImageService] 🔌 Imagine WS generation starting (n=' + imageCount + ', ar=' + aspectRatio + ')...');
+
+            const wsResult = await page.evaluate(async (prompt, aspectRatio, n, enableNsfw, enablePro) => {
+                const WS_URL = 'wss://grok.com/ws/imagine/listen';
+                const URL_PATTERN = /\/images\/([a-f0-9-]+)\.(png|jpg|jpeg)/i;
+                const ROUND_TIMEOUT_MS = 120000;
+                const STREAM_IDLE_MS = 30000;
+                const INTER_ROUND_GRACE_MS = 2000;
+                const MAX_ROUNDS = 4;
+
+                function buildReset() {
+                    return {
+                        type: 'conversation.item.create',
+                        timestamp: Date.now(),
+                        item: { type: 'message', content: [{ type: 'reset' }] },
+                    };
+                }
+                function buildRequest(requestId) {
+                    return {
+                        type: 'conversation.item.create',
+                        timestamp: Date.now(),
+                        item: {
+                            type: 'message',
+                            content: [{
+                                requestId,
+                                text: prompt,
+                                type: 'input_text',
+                                properties: {
+                                    section_count: 0,
+                                    is_kids_mode: false,
+                                    enable_nsfw: enableNsfw,
+                                    skip_upsampler: false,
+                                    enable_side_by_side: true,
+                                    is_initial: false,
+                                    aspect_ratio: aspectRatio,
+                                    enable_pro: enablePro,
+                                },
+                            }],
+                        },
+                    };
+                }
+
+                const debug = [];
+                const errors = [];
+                const finals = [];          // { blob, url, image_id, order, moderated, r_rated }
+                const seenFinals = new Set();
+                let ws;
+                try {
+                    ws = new WebSocket(WS_URL);
+                } catch (e) {
+                    return { finals, errors: [e.message || String(e)], debug };
+                }
+
+                let resolveOuter;
+                const outer = new Promise(r => { resolveOuter = r; });
+
+                let roundIdx = 0;
+                let roundStartedAt = 0;
+                let lastFrameAt = Date.now();
+                let slots = new Map();   // image_id -> slot
+                let roundIdleTimer = null;
+                let overallTimer = null;
+
+                function finish(reason) {
+                    debug.push('finish: ' + reason + ' | finals=' + finals.length);
+                    try { ws.close(); } catch (_) {}
+                    if (roundIdleTimer) clearInterval(roundIdleTimer);
+                    if (overallTimer) clearTimeout(overallTimer);
+                    resolveOuter({ finals, errors, debug });
+                }
+
+                function startRound() {
+                    roundIdx++;
+                    roundStartedAt = Date.now();
+                    lastFrameAt = Date.now();
+                    slots = new Map();
+                    debug.push('round ' + roundIdx + ' starting');
+                    try {
+                        ws.send(JSON.stringify(buildReset()));
+                        const requestId = (typeof crypto !== 'undefined' && crypto.randomUUID)
+                            ? crypto.randomUUID()
+                            : ('req-' + Math.random().toString(36).slice(2));
+                        ws.send(JSON.stringify(buildRequest(requestId)));
+                    } catch (e) {
+                        errors.push('send_failed: ' + (e.message || String(e)));
+                        finish('send_failed');
+                    }
+                }
+
+                function maybeAdvance() {
+                    if (finals.length >= n) {
+                        finish('got_enough');
+                        return;
+                    }
+                    if (slots.size > 0 && Array.from(slots.values()).every(s => s.done)) {
+                        if (roundIdx >= MAX_ROUNDS) {
+                            finish('max_rounds');
+                            return;
+                        }
+                        // Wait briefly to let server close (single-round servers do).
+                        setTimeout(() => {
+                            if (ws.readyState === WebSocket.OPEN) {
+                                debug.push('all slots done, requesting another round');
+                                startRound();
+                            }
+                        }, INTER_ROUND_GRACE_MS);
+                    }
+                }
+
+                ws.onopen = () => {
+                    debug.push('ws open');
+                    startRound();
+                };
+
+                ws.onmessage = (event) => {
+                    lastFrameAt = Date.now();
+                    let msg;
+                    try { msg = JSON.parse(event.data); }
+                    catch (_) { return; }
+
+                    const msgType = msg.type;
+
+                    if (msgType === 'json') {
+                        const status = msg.current_status;
+                        const imageId = String(msg.image_id || msg.job_id || '');
+                        if (!imageId) return;
+
+                        if (status === 'start_stage') {
+                            slots.set(imageId, {
+                                image_id: imageId,
+                                order: parseInt(msg.order || 0, 10),
+                                width: parseInt(msg.width || 0, 10),
+                                height: parseInt(msg.height || 0, 10),
+                                last_blob: '',
+                                last_url: '',
+                                done: false,
+                                moderated: false,
+                                r_rated: false,
+                            });
+                            debug.push('start_stage order=' + (msg.order || 0) + ' id=' + imageId.slice(0, 8));
+                        } else if (status === 'completed') {
+                            const slot = slots.get(imageId);
+                            if (!slot || slot.done) return;
+                            slot.done = true;
+                            slot.moderated = !!msg.moderated;
+                            slot.r_rated = !!msg.r_rated;
+
+                            if (slot.last_blob && !seenFinals.has(imageId)) {
+                                seenFinals.add(imageId);
+                                finals.push({
+                                    blob: slot.last_blob,
+                                    url: slot.last_url,
+                                    image_id: imageId,
+                                    order: slot.order,
+                                    moderated: slot.moderated,
+                                    r_rated: slot.r_rated,
+                                });
+                                debug.push('completed order=' + slot.order + ' blob_len=' + slot.last_blob.length + ' mod=' + slot.moderated);
+                            } else {
+                                debug.push('completed order=' + slot.order + ' NO_BLOB mod=' + slot.moderated);
+                            }
+                            maybeAdvance();
+                        }
+                    } else if (msgType === 'image') {
+                        const url = msg.url || '';
+                        const blob = msg.blob || '';
+                        const m = URL_PATTERN.exec(url);
+                        if (!m) return;
+                        const imageId = m[1];
+                        const slot = slots.get(imageId);
+                        if (slot && !slot.done && blob) {
+                            // Always replace with the latest (highest progress) blob.
+                            slot.last_blob = blob;
+                            slot.last_url = url;
+                        }
+                    } else if (msgType === 'error') {
+                        const code = msg.err_code || 'upstream_error';
+                        const message = msg.err_msg || JSON.stringify(msg);
+                        errors.push(code + ': ' + message);
+                        debug.push('server error: ' + code);
+                        // Best-effort: emit any buffered slots before exiting.
+                        for (const slot of slots.values()) {
+                            if (!slot.done && slot.last_blob && !seenFinals.has(slot.image_id)) {
+                                seenFinals.add(slot.image_id);
+                                finals.push({
+                                    blob: slot.last_blob,
+                                    url: slot.last_url,
+                                    image_id: slot.image_id,
+                                    order: slot.order,
+                                    moderated: false,
+                                    r_rated: false,
+                                });
+                            }
+                        }
+                        finish('server_error');
+                    }
+                };
+
+                ws.onerror = () => {
+                    debug.push('ws onerror');
+                };
+
+                ws.onclose = (event) => {
+                    debug.push('ws closed code=' + event.code);
+                    // Best-effort: any slots with a buffered blob become finals.
+                    for (const slot of slots.values()) {
+                        if (!slot.done && slot.last_blob && !seenFinals.has(slot.image_id)) {
+                            seenFinals.add(slot.image_id);
+                            finals.push({
+                                blob: slot.last_blob,
+                                url: slot.last_url,
+                                image_id: slot.image_id,
+                                order: slot.order,
+                                moderated: false,
+                                r_rated: false,
+                            });
+                        }
+                    }
+                    finish('ws_close');
+                };
+
+                // Idle watchdog: kill round if no frames for STREAM_IDLE_MS.
+                roundIdleTimer = setInterval(() => {
+                    if (Date.now() - lastFrameAt > STREAM_IDLE_MS) {
+                        debug.push('stream idle timeout');
+                        finish('stream_idle');
+                    }
+                    if (Date.now() - roundStartedAt > ROUND_TIMEOUT_MS) {
+                        debug.push('round timeout');
+                        finish('round_timeout');
+                    }
+                }, 2000);
+
+                // Hard ceiling.
+                overallTimer = setTimeout(() => {
+                    debug.push('overall timeout');
+                    finish('overall_timeout');
+                }, ROUND_TIMEOUT_MS * MAX_ROUNDS);
+
+                return outer;
+            }, prompt, aspectRatio, imageCount, enableNsfw, enablePro);
+
+            if (wsResult.debug?.length > 0) {
+                console.log('[ImageService] 🔌 WS debug:\n  ' + wsResult.debug.join('\n  '));
+            }
+
+            const finals = wsResult.finals || [];
+            console.log('[ImageService] 🔌 WS finals: ' + finals.length + ' (errors: ' + (wsResult.errors || []).length + ')');
+
+            if (finals.length === 0) {
+                if ((wsResult.errors || []).length > 0) {
+                    console.log('[ImageService] 🔌 WS errors: ' + wsResult.errors.join(' | '));
+                }
+                return null;
+            }
+
+            const result = {
+                title: '',
+                imageUrls: [],
+                imageBase64: [],
+                error: null,
+                status: 200,
+            };
+
+            // Sort by `order` so saved file indexes match grok's slot order.
+            finals.sort((a, b) => (a.order || 0) - (b.order || 0));
+
+            for (let i = 0; i < finals.length; i++) {
+                const img = finals[i];
+                const raw = img.blob || '';
+                if (!raw) continue;
+                const isDataUrl = raw.startsWith('data:');
+                // Best-guess mime from the URL extension; fall back to image/jpeg.
+                let mime = 'image/jpeg';
+                if (img.url) {
+                    const ext = (img.url.match(/\.(png|jpg|jpeg|webp)(?:[?#]|$)/i) || [])[1];
+                    if (ext) {
+                        const lower = ext.toLowerCase();
+                        mime = lower === 'png' ? 'image/png'
+                            : lower === 'webp' ? 'image/webp'
+                            : 'image/jpeg';
+                    }
+                }
+                const dataUrl = isDataUrl ? raw : ('data:' + mime + ';base64,' + raw);
+                const base64Data = isDataUrl ? (raw.split(',')[1] || '') : raw;
+                const size = Math.floor(base64Data.length * 3 / 4);
+
+                result.imageBase64.push({
+                    data: dataUrl,
+                    imageIndex: img.order != null ? img.order : i,
+                    size,
+                });
+            }
+
+            return result;
+        } catch (err) {
+            console.log('[ImageService] 🔌 WS exception: ' + err.message);
+            return null;
+        }
+    }
+
+    /**
      * Generate image via browser page (same context as grok.com)
      * Uses cardAttachment.jsonData.image_chunk for URLs (Grok's actual response format)
      * Race-downloads from multiple endpoints before moderation blur is applied
@@ -390,8 +734,25 @@ class ImageService {
      */
     async generateOne(prompt, session, config = {}, onProgress = null) {
         const MAX_RETRIES = PROCESSING_CONFIG.MAX_RETRIES;
+        const useWebSocket = config.useImagineWebSocket !== false;
 
-        // PRIMARY: Try browser-context generation (bypasses moderation blur)
+        // PRIMARY: Imagine WebSocket — multi-image + base64 blobs that bypass CDN moderation.
+        if (useWebSocket && session._page) {
+            try {
+                console.log('[ImageService] Imagine WS generation (multi-image, anti-blur)...');
+                const wsResult = await this.generateViaWebSocket(prompt, session, config);
+                if (wsResult && (wsResult.imageBase64.length > 0 || wsResult.imageUrls.length > 0)) {
+                    console.log('[ImageService] WS gen SUCCESS: ' + wsResult.imageBase64.length + ' base64 + ' + wsResult.imageUrls.length + ' URLs');
+                    if (onProgress) onProgress({ progress: 100, status: 'completed' });
+                    return wsResult;
+                }
+                console.log('[ImageService] WS gen no images, falling back to chat-stream browser path...');
+            } catch (wsErr) {
+                console.log('[ImageService] WS gen error: ' + wsErr.message + ', falling back...');
+            }
+        }
+
+        // SECONDARY: Browser-context conversations/new (parses cardAttachment.image_chunk).
         if (session._page) {
             try {
                 console.log('[ImageService] Browser-context generation (anti-blur)...');
