@@ -164,6 +164,11 @@ class ImageService {
                                 text: prompt,
                                 type: 'input_text',
                                 properties: {
+                                    // model_name pins the photorealistic Imagine model. Without it,
+                                    // the server falls back to a default that often produces
+                                    // anime/illustration output. Discovered by capturing the WS
+                                    // frame echo from grok.com/imagine.
+                                    model_name: 'imagine-x-1',
                                     section_count: 0,
                                     is_kids_mode: false,
                                     enable_nsfw: enableNsfw,
