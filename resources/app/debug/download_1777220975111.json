@@ -1,0 +1,22 @@
+{
+  "imageUrl": "users/d86bba15-edba-48f8-a053-86ba84189a4d/generated/90be5d2f-bd93-41d1-afe0-7a3dd916b01d-part-0/image.jpg",
+  "urlsToTry": [
+    "https://assets.grok.com/users/d86bba15-edba-48f8-a053-86ba84189a4d/generated/90be5d2f-bd93-41d1-afe0-7a3dd916b01d-part-0/image.jpg",
+    "https://assets.grok.com/users/d86bba15-edba-48f8-a053-86ba84189a4d/generated/90be5d2f-bd93-41d1-afe0-7a3dd916b01d/image.jpg"
+  ],
+  "hasCookies": true,
+  "cookieLen": 1908,
+  "headerKeys": [
+    "x-xai-request-id",
+    "sec-ch-ua-platform",
+    "referer",
+    "sec-ch-ua",
+    "sec-ch-ua-mobile",
+    "baggage",
+    "sentry-trace",
+    "traceparent",
+    "user-agent",
+    "x-statsig-id",
+    "cookie"
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "imageChunkMapSize": 1,
+  "imageChunkMap": {
+    "f62c5142-07bc-4a96-9091-e964a428fa28": {
+      "imageUrl": "users/d86bba15-edba-48f8-a053-86ba84189a4d/generated/f62c5142-07bc-4a96-9091-e964a428fa28/image.jpg",
+      "progress": 100,
+      "imageIndex": 0
+    }
+  },
+  "imageUrlsCount": 1,
+  "imageBase64Count": 0,
+  "imageUrls": [
+    {
+      "imageUrl": "users/d86bba15-edba-48f8-a053-86ba84189a4d/generated/f62c5142-07bc-4a96-9091-e964a428fa28/image.jpg",
+      "imageIndex": 0
+    }
+  ],
+  "title": "Japanese Negative Film Summer Portrait"
+}

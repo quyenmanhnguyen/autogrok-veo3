@@ -1,0 +1,19 @@
+{
+  "imageChunkMapSize": 1,
+  "imageChunkMap": {
+    "48b432d3-f853-43db-9b6f-2846d2d34296": {
+      "imageUrl": "users/d86bba15-edba-48f8-a053-86ba84189a4d/generated/48b432d3-f853-43db-9b6f-2846d2d34296/image.jpg",
+      "progress": 100,
+      "imageIndex": 0
+    }
+  },
+  "imageUrlsCount": 1,
+  "imageBase64Count": 0,
+  "imageUrls": [
+    {
+      "imageUrl": "users/d86bba15-edba-48f8-a053-86ba84189a4d/generated/48b432d3-f853-43db-9b6f-2846d2d34296/image.jpg",
+      "imageIndex": 0
+    }
+  ],
+  "title": "Beautiful Sunset Over Calm Ocean"
+}
