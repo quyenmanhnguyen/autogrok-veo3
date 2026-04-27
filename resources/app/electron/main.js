@@ -151,6 +151,44 @@ function createWindow() {
 
     mainWindow.webContents.on('did-finish-load', () => {
         console.log('[Electron] Page loaded successfully');
+        // Inject UI patches — delete is handled in renderer.js via __autogrokSetJobs
+        mainWindow.webContents.executeJavaScript(`
+            (function() {
+                console.log('[Patch] Injecting UI fixes v2...');
+
+                // 1. Ctrl+Shift+C emergency cancel
+                document.addEventListener('keydown', (e) => {
+                    if (e.ctrlKey && e.shiftKey && e.key === 'C') {
+                        e.preventDefault();
+                        console.log('[Patch] Emergency cancel (Ctrl+Shift+C)');
+                        if (window.electronAPI?.image?.cancel) {
+                            window.electronAPI.image.cancel();
+                        }
+                    }
+                });
+
+                // 2. Make Stop button call backend cancel
+                document.addEventListener('click', (e) => {
+                    const btn = e.target.closest('button');
+                    if (!btn) return;
+                    const text = btn.textContent || '';
+                    if (text.includes('Stop') || text.includes('stop')) {
+                        console.log('[Patch] Stop button → calling image:cancel');
+                        if (window.electronAPI?.image?.cancel) {
+                            window.electronAPI.image.cancel();
+                        }
+                    }
+                    if (text.includes('Clear') || text.includes('clear')) {
+                        console.log('[Patch] Clear button → cancelling backend');
+                        if (window.electronAPI?.image?.cancel) {
+                            window.electronAPI.image.cancel();
+                        }
+                    }
+                }, true);
+
+                console.log('[Patch] UI fixes v2 injected successfully');
+            })();
+        `).catch((err) => console.error('[Electron] Patch injection error:', err));
     });
 
     mainWindow.webContents.on('render-process-gone', (_event, details) => {
@@ -590,6 +628,7 @@ ipcMain.handle('auth:clearSessions', async () => {
 ipcMain.handle('image:generate', async (_, params) => {
     try {
         const { prompts, config, startIdx: baseIdx = 0 } = params;
+        ImageService.resetCancel();
         const sessions = AuthService.getAllSessions();
 
         if (sessions.length === 0) {
@@ -636,6 +675,13 @@ ipcMain.handle('image:generate', async (_, params) => {
         sendLog('error', `Image generation error: ${error.message}`);
         return { success: false, error: error.message };
     }
+});
+
+// IPC Handler - Cancel image generation
+ipcMain.handle('image:cancel', async () => {
+    ImageService.cancelAll();
+    sendLog('info', 'Image generation cancelled by user');
+    return { success: true };
 });
 
 // IPC Handlers - Video generation (parallel multi-account)

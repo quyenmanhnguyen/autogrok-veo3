@@ -8,6 +8,16 @@ const path = require('path');
 class ImageService {
     constructor() {
         this.activeJobs = new Map();
+        this._cancelled = false;
+    }
+
+    cancelAll() {
+        this._cancelled = true;
+        console.log('[ImageService] ⛔ Cancel requested');
+    }
+
+    resetCancel() {
+        this._cancelled = false;
     }
 
     /**
@@ -138,7 +148,9 @@ class ImageService {
 
             console.log('[ImageService] 🔌 Imagine WS generation starting (n=' + imageCount + ', ar=' + aspectRatio + ')...');
 
-            const wsResult = await page.evaluate(async (prompt, aspectRatio, n, enableNsfw, enablePro) => {
+            // Wrap page.evaluate with a hard 90s timeout to prevent infinite hangs
+            const WS_HARD_TIMEOUT = 90000;
+            const wsPromise = page.evaluate(async (prompt, aspectRatio, n, enableNsfw, enablePro) => {
                 const WS_URL = 'wss://grok.com/ws/imagine/listen';
                 const URL_PATTERN = /\/images\/([a-f0-9-]+)\.(png|jpe?g|webp)/i;
                 const ROUND_TIMEOUT_MS = 120000;
@@ -164,6 +176,7 @@ class ImageService {
                                 text: prompt,
                                 type: 'input_text',
                                 properties: {
+                                    imageModelName: 'aurora',
                                     section_count: 0,
                                     is_kids_mode: false,
                                     enable_nsfw: enableNsfw,
@@ -202,9 +215,11 @@ class ImageService {
 
                 function harvestPartialFinals() {
                     // Promote any slot with a buffered blob but no `completed` frame into
-                    // a final image. Safe to call multiple times — `seenFinals` guards dupes.
+                    // a final image. Skip tiny blobs (< 50000 base64 chars ≈ 37KB decoded)
+                    // which are just blurred preview frames, not real images.
+                    const MIN_BLOB_LEN = 50000;
                     for (const slot of slots.values()) {
-                        if (!slot.done && slot.last_blob && !seenFinals.has(slot.image_id)) {
+                        if (!slot.done && slot.last_blob && slot.last_blob.length >= MIN_BLOB_LEN && !seenFinals.has(slot.image_id)) {
                             seenFinals.add(slot.image_id);
                             finals.push({
                                 blob: slot.last_blob,
@@ -376,9 +391,28 @@ class ImageService {
                 return outer;
             }, prompt, aspectRatio, imageCount, enableNsfw, enablePro);
 
+            const wsTimeoutPromise = new Promise((_, reject) =>
+                setTimeout(() => reject(new Error('WS hard timeout after ' + WS_HARD_TIMEOUT + 'ms')), WS_HARD_TIMEOUT)
+            );
+            const wsResult = await Promise.race([wsPromise, wsTimeoutPromise]);
+
             if (wsResult.debug?.length > 0) {
                 console.log('[ImageService] 🔌 WS debug:\n  ' + wsResult.debug.join('\n  '));
             }
+
+            // File-based debug log (captures WS result even without DevTools)
+            try {
+                const fs = require('fs');
+                const debugDir = path.join(path.dirname(require.resolve('../config/app.config')), '..', '..', 'debug');
+                fs.mkdirSync(debugDir, { recursive: true });
+                fs.writeFileSync(path.join(debugDir, 'wsDebug_' + Date.now() + '.json'), JSON.stringify({
+                    finalsCount: (wsResult.finals || []).length,
+                    errorsCount: (wsResult.errors || []).length,
+                    errors: wsResult.errors || [],
+                    debug: wsResult.debug || [],
+                    finalsPreview: (wsResult.finals || []).map(f => ({ image_id: f.image_id, order: f.order, moderated: f.moderated, blob_len: (f.blob || '').length, url: f.url })),
+                }, null, 2), 'utf8');
+            } catch(e) { /* ignore */ }
 
             const finals = wsResult.finals || [];
             console.log('[ImageService] 🔌 WS finals: ' + finals.length + ' (errors: ' + (wsResult.errors || []).length + ')');
@@ -398,14 +432,20 @@ class ImageService {
                 status: 200,
             };
 
-            // Sort by `order` so saved file indexes match grok's slot order.
-            finals.sort((a, b) => (a.order || 0) - (b.order || 0));
+            // Sort by blob size descending — prioritize highest-quality images
+            // so when we trim to imageCount, we keep the best ones.
+            finals.sort((a, b) => (b.blob || '').length - (a.blob || '').length);
 
-            for (let i = 0; i < finals.length; i++) {
-                const img = finals[i];
+            // Trim to requested count — Grok WS may return more than requested
+            const trimmedFinals = finals.slice(0, imageCount);
+            // Re-sort trimmed by order for consistent file naming
+            trimmedFinals.sort((a, b) => (a.order || 0) - (b.order || 0));
+            console.log('[ImageService] 🔌 Trimmed to ' + trimmedFinals.length + ' of ' + finals.length + ' (requested ' + imageCount + ') | blob sizes: ' + trimmedFinals.map(f => (f.blob||'').length).join(','));
+
+            for (let i = 0; i < trimmedFinals.length; i++) {
+                const img = trimmedFinals[i];
                 const raw = img.blob || '';
-                if (!raw) continue;
-                const isDataUrl = raw.startsWith('data:');
+                const isDataUrl = raw ? raw.startsWith('data:') : false;
                 // Best-guess mime from the URL extension; fall back to image/jpeg.
                 let mime = 'image/jpeg';
                 if (img.url) {
@@ -417,15 +457,26 @@ class ImageService {
                             : 'image/jpeg';
                     }
                 }
-                const dataUrl = isDataUrl ? raw : ('data:' + mime + ';base64,' + raw);
-                const base64Data = isDataUrl ? (raw.split(',')[1] || '') : raw;
-                const size = Math.floor(base64Data.length * 3 / 4);
 
-                result.imageBase64.push({
-                    data: dataUrl,
-                    imageIndex: img.order != null ? img.order : i,
-                    size,
-                });
+                // Only include base64 if blob is large enough (not a blurred preview)
+                if (raw && raw.length >= 50000) {
+                    const dataUrl = isDataUrl ? raw : ('data:' + mime + ';base64,' + raw);
+                    const base64Data = isDataUrl ? (raw.split(',')[1] || '') : raw;
+                    const size = Math.floor(base64Data.length * 3 / 4);
+                    result.imageBase64.push({
+                        data: dataUrl,
+                        imageIndex: img.order != null ? img.order : i,
+                        size,
+                    });
+                }
+
+                // Always include CDN URL for fallback download (browser can get full-res)
+                if (img.url) {
+                    result.imageUrls.push({
+                        imageUrl: img.url,
+                        imageIndex: img.order != null ? img.order : i,
+                    });
+                }
             }
 
             return result;
@@ -1301,6 +1352,10 @@ class ImageService {
 
         async function worker() {
             while (nextIdx < N) {
+                if (self._cancelled) {
+                    console.log(`[ImageService] [${label}] ⛔ Cancelled, stopping worker`);
+                    break;
+                }
                 const myIdx = nextIdx++;
                 const prompt = prompts[myIdx];
                 const globalNum = startIdx + myIdx + 1;
@@ -1313,7 +1368,17 @@ class ImageService {
 
                 const savedFiles = [];
                 const shotNum = String(globalNum).padStart(4, '0');
+                const batchTs = Date.now().toString(36);
                 const titleSlug = (result.title || '').replace(/[^a-zA-Z0-9\u00C0-\u024F\u1E00-\u1EFF ]/g, '').trim().replace(/\s+/g, '_').substring(0, 60);
+
+                // DEBUG: log save attempt details to file
+                const _debugSave = { shotNum, titleSlug, outputFolder, base64Count: (result.imageBase64 || []).length, urlCount: (result.imageUrls || []).length, error: result.error, saved: [] };
+                try {
+                    const _fs = require('fs');
+                    const _debugDir = path.join(path.dirname(require.resolve('../config/app.config')), '..', '..', 'debug');
+                    _fs.mkdirSync(_debugDir, { recursive: true });
+                    _fs.writeFileSync(path.join(_debugDir, 'saveDebug_' + Date.now() + '.json'), JSON.stringify(_debugSave, null, 2), 'utf8');
+                } catch(_e) {}
 
                 if ((result.imageBase64 || []).length > 0) {
                     for (const img of result.imageBase64) {
@@ -1328,16 +1393,25 @@ class ImageService {
                                 }
                             }
                             const buffer = Buffer.from(base64Data, 'base64');
-                            const filename = titleSlug ? `shot${shotNum}_${titleSlug}_i${img.imageIndex || 0}.${ext}` : `shot${shotNum}_i${img.imageIndex || 0}.${ext}`;
+                            const filename = titleSlug ? `shot${shotNum}_${batchTs}_${titleSlug}_i${img.imageIndex || 0}.${ext}` : `shot${shotNum}_${batchTs}_i${img.imageIndex || 0}.${ext}`;
                             const filePath = FileService.saveFile(buffer, filename, outputFolder);
                             savedFiles.push(filePath);
                             img.size = buffer.length;
+                            _debugSave.saved.push({ filename, size: buffer.length, path: filePath });
                             console.log(`[ImageService] [${label}] 💾 Saved base64 image: ${filename} (${buffer.length} bytes)`);
                         } catch (error) {
+                            _debugSave.saved.push({ error: error.message, stack: error.stack });
                             console.error(`[ImageService] [${label}] Base64 save error:`, error.message);
                         }
                     }
                 }
+
+                // Update debug file with save results
+                try {
+                    const _fs2 = require('fs');
+                    const _debugDir2 = path.join(path.dirname(require.resolve('../config/app.config')), '..', '..', 'debug');
+                    _fs2.writeFileSync(path.join(_debugDir2, 'saveResult_' + Date.now() + '.json'), JSON.stringify(_debugSave, null, 2), 'utf8');
+                } catch(_e2) {}
 
                 const bestBase64Size = savedFiles.length > 0 ? Math.max(...(result.imageBase64 || []).map(i => i.size || 0), 0) : 0;
                 if ((result.imageUrls || []).length > 0 && bestBase64Size < 50000) {
@@ -1357,7 +1431,7 @@ class ImageService {
                             }
                             if (dl && dl.size > bestBase64Size) {
                                 const ext = dl.contentType?.includes('png') ? 'png' : 'jpg';
-                                const filename = titleSlug ? `shot${shotNum}_${titleSlug}_i${img.imageIndex || 0}.${ext}` : `shot${shotNum}_i${img.imageIndex || 0}.${ext}`;
+                                const filename = titleSlug ? `shot${shotNum}_${batchTs}_${titleSlug}_i${img.imageIndex || 0}.${ext}` : `shot${shotNum}_${batchTs}_i${img.imageIndex || 0}.${ext}`;
                                 const filePath = FileService.saveFile(dl.data, filename, outputFolder);
                                 savedFiles.push(filePath);
                                 console.log(`[ImageService] [${label}] 💾 Saved URL image: ${filename} (${dl.size} bytes)`);

@@ -40,6 +40,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
     image: {
         generate: (params) => ipcRenderer.invoke('image:generate', params),
+        cancel: () => ipcRenderer.invoke('image:cancel'),
     },
 
     video: {
