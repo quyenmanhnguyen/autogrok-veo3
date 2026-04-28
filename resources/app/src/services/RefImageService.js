@@ -680,7 +680,12 @@ class RefImageService {
 
             console.log('[RefImageService] 🌐 Browser-context ref generation starting...');
 
-            const browserResult = await page.evaluate(async (apiUrl, body, assetsBase, restAssetBase) => {
+            // Hard timeout: if the streaming response never closes (e.g. server
+            // keeps the connection open), the inner `while (true)` reader loop
+            // would hang the page.evaluate promise forever and lock the worker.
+            // Mirror the pattern used by generateViaWebSocket above.
+            const BROWSER_HARD_TIMEOUT = 120000;
+            const evalPromise = page.evaluate(async (apiUrl, body, assetsBase, restAssetBase) => {
                 const results = { imageUrls: [], imageData: [], errors: [], debug: [], title: '' };
 
                 async function fetchImageData(url, imageIndex, tag) {
@@ -869,6 +874,10 @@ class RefImageService {
 
                 return results;
             }, apiUrl, body, assetsBase, restAssetBase);
+            const timeoutPromise = new Promise((_, reject) =>
+                setTimeout(() => reject(new Error('Browser ref generation hard timeout')), BROWSER_HARD_TIMEOUT)
+            );
+            const browserResult = await Promise.race([evalPromise, timeoutPromise]);
 
             if (browserResult.debug?.length > 0) {
                 console.log('[RefImageService] 🌐 Browser debug:\n  ' + browserResult.debug.join('\n  '));
