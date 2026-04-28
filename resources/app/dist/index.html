@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="en">
 
 <head>
@@ -401,96 +401,275 @@ select option {
 <body>
         <div id="root"></div>
 <script>
-// Inject Image Count selector into config panel
+// ===== UI Config Injection v3 — Tab-Aware, No Duplicates =====
 (function() {
-    window.__imageCount = 4; // default
-
-    function injectImageCountDropdown() {
-        // Find the Aspect Ratio label/select container
-        const allLabels = document.querySelectorAll('label');
-        let aspectLabel = null;
-        for (const l of allLabels) {
-            if (l.textContent && l.textContent.includes('Aspect Ratio')) {
-                aspectLabel = l;
-                break;
-            }
+    window.__imageCount = 4;
+    window.__videoCount = 1;
+    var selectStyle = 'background:var(--bg-primary);color:var(--text-primary);border:1px solid rgba(255,255,255,0.1);border-radius:10px;padding:8px 12px;font-size:13px;cursor:pointer;flex:1;outline:none;transition:border-color 0.3s,box-shadow 0.3s;';
+    var labelStyle = 'color:var(--text-secondary);font-size:12px;font-weight:500;white-space:nowrap;min-width:100px;';
+    var rowStyle = 'margin-top:12px;display:flex;align-items:center;gap:10px;';
+    function addFocus(sel) {
+        sel.addEventListener('focus', function() { sel.style.borderColor='var(--accent)'; sel.style.boxShadow='0 0 12px rgba(0,229,255,0.15)'; });
+        sel.addEventListener('blur', function() { sel.style.borderColor='rgba(255,255,255,0.1)'; sel.style.boxShadow='none'; });
+    }
+    function makeRow(id, labelText, options, defaultVal, onChange) {
+        if (document.getElementById(id)) return null;
+        var container = document.createElement('div');
+        container.id = id;
+        container.style.cssText = rowStyle;
+        var lbl = document.createElement('label');
+        lbl.textContent = labelText;
+        lbl.style.cssText = labelStyle;
+        var sel = document.createElement('select');
+        sel.id = id + '-select';
+        sel.style.cssText = selectStyle;
+        options.forEach(function(o) {
+            var opt = document.createElement('option');
+            opt.value = o.value;
+            opt.textContent = o.label;
+            if (o.value == defaultVal) opt.selected = true;
+            sel.appendChild(opt);
+        });
+        sel.addEventListener('change', function() { onChange(sel.value); });
+        addFocus(sel);
+        container.appendChild(lbl);
+        container.appendChild(sel);
+        return container;
+    }
+    function getActiveTab() {
+        var tabs = document.querySelectorAll('[class*="tab-btn"], [class*="TabButton"], .tab-button, button');
+        for (var i = 0; i < tabs.length; i++) {
+            var t = tabs[i];
+            var isActive = t.classList.contains('active') || t.className.indexOf('active') >= 0 || t.getAttribute('aria-selected') === 'true';
+            if (!isActive) continue;
+            var txt = (t.textContent || '').toLowerCase();
+            if (txt.indexOf('i2v') >= 0 || txt.indexOf('image to video') >= 0 || txt.indexOf('nh sang video') >= 0) return 'i2v';
+            if (txt.indexOf('video') >= 0 || txt.indexOf('veo') >= 0) return 'video';
+            if (txt.indexOf('ref') >= 0) return 'refimg';
+            if (txt.indexOf('nh') >= 0 || txt.indexOf('image') >= 0 || txt.indexOf('img') >= 0) return 'image';
         }
-
-        if (!aspectLabel || document.getElementById('image-count-container')) return;
-
-        // Create container matching the existing style
-        const container = document.createElement('div');
-        container.id = 'image-count-container';
-        container.style.cssText = 'margin-top: 12px; display: flex; align-items: center; gap: 10px;';
-
-        const label = document.createElement('label');
-        label.textContent = 'Số lượng ảnh:';
-        label.style.cssText = 'color: var(--text-secondary); font-size: 12px; font-weight: 500; white-space: nowrap; min-width: 90px;';
-
-        const select = document.createElement('select');
-        select.id = 'image-count-select';
-        select.style.cssText = 'background: var(--bg-primary); color: var(--text-primary); border: 1px solid rgba(255,255,255,0.1); border-radius: 10px; padding: 8px 12px; font-size: 13px; cursor: pointer; flex: 1; outline: none; transition: border-color 0.3s, box-shadow 0.3s;';
-
-        [1, 2, 4].forEach(n => {
-            const opt = document.createElement('option');
-            opt.value = n;
-            opt.textContent = n + (n === 4 ? ' (mặc định)' : '');
-            if (n === 4) opt.selected = true;
-            select.appendChild(opt);
-        });
-
-        select.addEventListener('change', () => {
-            window.__imageCount = parseInt(select.value, 10);
-            console.log('[UI] Image count set to:', window.__imageCount);
-        });
-
-        select.addEventListener('focus', () => {
-            select.style.borderColor = 'var(--accent)';
-            select.style.boxShadow = '0 0 12px rgba(0,229,255,0.15)';
-        });
-        select.addEventListener('blur', () => {
-            select.style.borderColor = 'rgba(255,255,255,0.1)';
-            select.style.boxShadow = 'none';
-        });
-
-        container.appendChild(label);
-        container.appendChild(select);
-
-        // Insert after the aspect ratio section
-        const aspectParent = aspectLabel.closest('div') || aspectLabel.parentElement;
-        if (aspectParent && aspectParent.parentElement) {
-            aspectParent.parentElement.insertBefore(container, aspectParent.nextSibling);
+        return 'unknown';
+    }
+    function injectDropdowns() {
+        var allLabels = document.querySelectorAll('label');
+        var aspectLabel = null;
+        for (var i = 0; i < allLabels.length; i++) {
+            if (allLabels[i].textContent && allLabels[i].textContent.includes('Aspect Ratio')) { aspectLabel = allLabels[i]; break; }
+        }
+        if (!aspectLabel) return;
+        var aspectParent = aspectLabel.closest('div') || aspectLabel.parentElement;
+        if (!aspectParent || !aspectParent.parentElement) return;
+        var anchor = aspectParent;
+        // Image Count
+        if (!document.getElementById('image-count-container')) {
+            var imgRow = makeRow('image-count-container', 'S\u1ed1 l\u01b0\u1ee3ng \u1ea3nh:', [{value:1,label:'1'},{value:2,label:'2'},{value:4,label:'4 (m\u1eb7c \u0111\u1ecbnh)'}], 4, function(v) { window.__imageCount = parseInt(v, 10); });
+            if (imgRow) { anchor.parentElement.insertBefore(imgRow, anchor.nextSibling); anchor = imgRow; }
+        } else { anchor = document.getElementById('image-count-container'); }
+        // Video Count
+        if (!document.getElementById('video-count-container')) {
+            var vidRow = makeRow('video-count-container', 'S\u1ed1 l\u01b0\u1ee3ng video:', [{value:1,label:'1 (m\u1eb7c \u0111\u1ecbnh)'},{value:2,label:'2'},{value:4,label:'4'}], 1, function(v) { window.__videoCount = parseInt(v, 10); });
+            if (vidRow) { anchor.parentElement.insertBefore(vidRow, anchor.nextSibling); }
         }
     }
-
-    // Hook into image:generate to inject imageGenerationCount
-    function hookGenerate() {
-        if (!window.electronAPI?.image?.generate) return false;
-        if (window.__generateHooked) return true;
-        const origGenerate = window.electronAPI.image.generate;
-        window.electronAPI.image.generate = function(params) {
-            if (params && params.config) {
-                params.config.imageGenerationCount = window.__imageCount || 4;
-            } else if (params) {
-                params.config = { imageGenerationCount: window.__imageCount || 4 };
-            }
-            console.log('[UI] Generating with imageCount:', window.__imageCount || 4);
-            return origGenerate(params);
-        };
-        window.__generateHooked = true;
+    function updateVisibility() {
+        var tab = getActiveTab();
+        var imgC = document.getElementById('image-count-container');
+        var vidC = document.getElementById('video-count-container');
+        var isImg = (tab === 'image' || tab === 'refimg');
+        var isVid = (tab === 'video' || tab === 'i2v');
+        if (imgC) imgC.style.display = isImg ? 'flex' : 'none';
+        if (vidC) vidC.style.display = isVid ? 'flex' : 'none';
+    }
+    function hookAllGenerates() {
+        if (!window.electronAPI) return false;
+        if (window.__allGeneratesHooked) return true;
+        var api = window.electronAPI;
+        if (api.image && api.image.generate && !api.image._origGenerate) {
+            api.image._origGenerate = api.image.generate;
+            api.image.generate = function(params) {
+                if (params && params.config) params.config.imageGenerationCount = window.__imageCount || 4;
+                else if (params) params.config = { imageGenerationCount: window.__imageCount || 4 };
+                return api.image._origGenerate(params);
+            };
+        }
+        if (api.video && api.video.generate && !api.video._origGenerate) {
+            api.video._origGenerate = api.video.generate;
+            api.video.generate = function(params) {
+                if (!params) params = {};
+                if (!params.config) params.config = {};
+                params.config.videoCount = window.__videoCount || 1;
+                return api.video._origGenerate(params);
+            };
+        }
+        if (api.i2v && api.i2v.generate && !api.i2v._origGenerate) {
+            api.i2v._origGenerate = api.i2v.generate;
+            api.i2v.generate = function(params) {
+                if (!params) params = {};
+                if (!params.config) params.config = {};
+                params.config.videoCount = window.__videoCount || 1;
+                return api.i2v._origGenerate(params);
+            };
+        }
+        window.__allGeneratesHooked = true;
         return true;
     }
-
-    // Try injecting periodically until React has rendered
-    let attempts = 0;
-    const interval = setInterval(() => {
-        injectImageCountDropdown();
-        hookGenerate();
+    var attempts = 0;
+    var interval = setInterval(function() {
+        injectDropdowns();
+        hookAllGenerates();
+        updateVisibility();
         attempts++;
-        if (document.getElementById('image-count-container') && window.__generateHooked || attempts > 60) {
+        if ((document.getElementById('video-count-container') && window.__allGeneratesHooked) || attempts > 60) {
             clearInterval(interval);
+            setInterval(updateVisibility, 500);
         }
     }, 1000);
+})();
+</script>
+
+<style id="ag-tracker-css">
+#ag-tracker{position:fixed;bottom:16px;right:16px;z-index:9999;width:420px;max-height:440px;background:rgba(20,20,30,.95);border:1px solid rgba(0,229,255,.15);border-radius:12px;display:flex;flex-direction:column;box-shadow:0 8px 32px rgba(0,0,0,.5);backdrop-filter:blur(12px);font-family:'Inter',sans-serif;font-size:12px;color:#e0e0e0;overflow:hidden;transition:all .3s}
+#ag-tracker.collapsed #ag-tracker-body,#ag-tracker.collapsed #ag-tracker-summary{display:none}
+#ag-tracker-header{padding:10px 14px;display:flex;justify-content:space-between;align-items:center;cursor:pointer;border-bottom:1px solid rgba(255,255,255,.08);background:rgba(0,229,255,.04)}
+#ag-tracker-header:hover{background:rgba(0,229,255,.08)}
+.ag-badge{background:#00e5ff;color:#000;border-radius:10px;padding:1px 8px;font-size:11px;font-weight:700}
+.ag-toggle{color:#888;font-size:10px}
+#ag-tracker-body{overflow-y:auto;max-height:300px}
+#ag-tracker-summary{padding:6px 14px;display:flex;gap:12px;font-size:11px;border-top:1px solid rgba(255,255,255,.06);background:rgba(0,0,0,.2);align-items:center}
+.ag-job-row{display:flex;align-items:center;gap:5px;padding:4px 10px 4px 14px;border-bottom:1px solid rgba(255,255,255,.04);transition:background .2s}
+.ag-job-row:hover{background:rgba(255,255,255,.04)}
+.ag-job-row.done{opacity:.7}
+.ag-job-row.error{background:rgba(255,50,50,.06)}
+.ag-idx{font-size:11px;color:#888;min-width:32px;white-space:nowrap}
+.ag-prompt{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px}
+.ag-bar-wrap{width:50px;height:5px;background:rgba(255,255,255,.08);border-radius:3px;overflow:hidden}
+.ag-bar-fill{height:100%;border-radius:3px;transition:width .5s;background:linear-gradient(90deg,#00e5ff,#76ff03)}
+.ag-job-row.error .ag-bar-fill{background:#ff5252}
+.ag-status{font-size:12px;min-width:18px;text-align:center}
+.ag-cancel-btn{background:#ff5252;color:#fff;border:none;border-radius:6px;padding:3px 10px;font-size:10px;font-weight:600;cursor:pointer;white-space:nowrap;transition:all .2s}
+.ag-cancel-btn:hover{background:#ff1744;transform:scale(1.05)}
+.ag-cancel-btn:active{transform:scale(.95)}
+.ag-x-btn{background:none;border:1px solid rgba(255,82,82,.5);color:#ff5252;border-radius:4px;width:18px;height:18px;font-size:11px;line-height:16px;text-align:center;cursor:pointer;padding:0;transition:all .15s;flex-shrink:0}
+.ag-x-btn:hover{background:#ff5252;color:#fff;border-color:#ff5252;transform:scale(1.1)}
+.ag-clear-btn{background:none;border:1px solid rgba(255,255,255,.15);color:#888;border-radius:6px;padding:2px 8px;font-size:10px;cursor:pointer;transition:all .2s;margin-left:4px}
+.ag-clear-btn:hover{border-color:#ff5252;color:#ff5252}
+</style>
+<script>
+// ===== PROGRESS TRACKER v8 — stacked batches, per-job cancel =====
+(function(){
+var bc=0,cBid=null,cBtype=null,jobs=new Map(),panel=null,collapsed=false;
+var cancelledKeys=new Set();
+window.__cancelledJobKeys=cancelledKeys;
+function mkPanel(){
+if(document.getElementById('ag-tracker'))return;
+panel=document.createElement('div');panel.id='ag-tracker';
+var h=document.createElement('div');h.id='ag-tracker-header';
+h.innerHTML='<span>\u{1F4CA} Ti\u1EBFn tr\u00ECnh</span><div style="display:flex;align-items:center;gap:8px"><span class="ag-badge" id="ag-tracker-count">0</span><span class="ag-toggle">\u25BC</span></div>';
+var b=document.createElement('div');b.id='ag-tracker-body';
+var s=document.createElement('div');s.id='ag-tracker-summary';
+s.innerHTML='<span>\u2705 <b id="ag-s-done">0</b></span><span>\u274C <b id="ag-s-err">0</b></span><span>\u{1F504} <b id="ag-s-run">0</b></span><span>\u23F3 <b id="ag-s-wait">0</b></span><span style="flex:1"></span><button class="ag-clear-btn" id="ag-clear-btn" title="X\u00F3a l\u1ECBch s\u1EED">\u{1F5D1}</button><button class="ag-cancel-btn" id="ag-cancel-btn" title="D\u1EEBng t\u1EA5t c\u1EA3">\u26D4 D\u1EEBng</button>';
+panel.appendChild(h);panel.appendChild(b);panel.appendChild(s);
+document.body.appendChild(panel);
+h.onclick=function(e){if(e.target.closest('.ag-cancel-btn')||e.target.closest('.ag-x-btn')||e.target.closest('.ag-clear-btn'))return;collapsed=!collapsed;panel.classList.toggle('collapsed',collapsed)};
+document.getElementById('ag-cancel-btn').onclick=function(e){e.stopPropagation();cancelAll()};
+document.getElementById('ag-clear-btn').onclick=function(e){e.stopPropagation();clearHistory()};
+b.onclick=function(e){var btn=e.target.closest('.ag-x-btn');if(!btn)return;e.stopPropagation();var k=btn.getAttribute('data-jk');if(k)cancelJob(k)};
+}
+function cancelJob(key){
+var j=jobs.get(key);
+if(!j||j.st==='done'||j.st==='error')return;
+j.st='error';j.err='D\u1EEBng b\u1EDFi ng\u01B0\u1EDDi d\u00F9ng';if(!j.t1)j.t1=Date.now();
+cancelledKeys.add(key);
+render();
+}
+function cancelAll(){
+if(!window.electronAPI)return;
+var api=window.electronAPI;
+if(api.image&&api.image.cancel)api.image.cancel();
+if(api.video&&api.video.cancel)api.video.cancel();
+if(api.i2v&&api.i2v.cancel)api.i2v.cancel();
+if(api.refimg&&api.refimg.cancel)api.refimg.cancel();
+for(var e of jobs.entries()){var k=e[0],j=e[1];
+if(j.st==='running'||j.st==='pending'){j.st='error';j.err='D\u1EEBng b\u1EDFi ng\u01B0\u1EDDi d\u00F9ng';if(!j.t1)j.t1=Date.now();cancelledKeys.add(k)}
+}
+render();
+}
+function clearHistory(){
+// Remove only completed (done/error) jobs, keep running/pending
+var toRemove=[];
+for(var e of jobs.entries()){if(e[1].st==='done'||e[1].st==='error')toRemove.push(e[0])}
+toRemove.forEach(function(k){jobs.delete(k)});
+cancelledKeys.clear();
+render();
+}
+function newB(t){bc++;cBid='B'+bc;cBtype=t;}
+function onProg(ev){
+if(!ev||!ev.jobId)return;
+var t=ev.jobId,d=ev.progress||{},gi=d.globalIdx!=null?d.globalIdx:0;
+var bb=d.batchId||null;
+// Always create new batch when batchId changes or new job type
+if(bb&&bb!==cBid){cBid=bb;cBtype=t;bc++}
+else if(!cBid){newB(t)}
+else if(t!==cBtype){newB(t)}
+else if(gi===0&&!bb){var ex=jobs.get(cBid+':'+t+':0');if(ex&&(ex.st==='done'||ex.st==='error'))newB(t)}
+var k=cBid+':'+t+':'+gi;
+if(cancelledKeys.has(k))return;
+if(!jobs.has(k))jobs.set(k,{bid:cBid,type:t,gi:gi,pr:getPr(d),pct:0,st:'pending',err:null,t0:Date.now(),t1:null,key:k});
+var j=jobs.get(k);
+var p=typeof d.progress==='number'?d.progress:j.pct;
+j.pct=Math.max(j.pct,p);
+if(d.prompt&&typeof d.prompt==='string')j.pr=d.prompt;
+if(d.result){j.st=d.result.success?'done':'error';j.pct=100;if(d.result.error)j.err=d.result.error;if(d.result.title)j.pr=d.result.title;if(!j.t1)j.t1=Date.now()}
+else if(p>0&&p<100)j.st='running';
+else if(p>=100){if(j.st!=='error')j.st='done';if(!j.t1)j.t1=Date.now()}
+else if(j.st==='pending')j.st='running';
+render();
+}
+function getPr(d){if(typeof d.prompt==='string')return d.prompt;if(d.item&&d.item.prompt)return d.item.prompt;if(d.item&&d.item.imagePath)return d.item.imagePath.split(/[\\\/]/).pop();return ''}
+function ft(ms){if(!ms||ms<=0)return'';var s=Math.round(ms/1000);if(s<60)return s+'s';return Math.floor(s/60)+'m'+(s%60>0?(s%60)+'s':'')}
+var TL={image:'\u{1F5BC}\uFE0F Img',video:'\u{1F3AC} Vid',i2v:'\u{1F4F8} I2V',refimg:'\u{1F3A8} Ref'};
+var TI={image:'\u{1F5BC}',video:'\u{1F3AC}',i2v:'\u{1F4F8}',refimg:'\u{1F3A8}'};
+var SI={pending:'\u23F3',running:'\u{1F504}',done:'\u2705',error:'\u274C'};
+function render(){
+mkPanel();var body=document.getElementById('ag-tracker-body');if(!body)return;
+var bm=new Map();for(var j of jobs.values()){if(!bm.has(j.bid))bm.set(j.bid,[]);bm.get(j.bid).push(j)}
+var dn=0,er=0,rn=0,wt=0,html='';
+var bids=Array.from(bm.keys()).reverse();
+for(var bi=0;bi<bids.length;bi++){
+var bid=bids[bi],bj=bm.get(bid).sort(function(a,b){return a.gi-b.gi});
+var bt=bj[0]?bj[0].type:'',lb=TL[bt]||bt,ic=bid===cBid;
+var bd=bj.filter(function(x){return x.st==='done'}).length;
+var be=bj.filter(function(x){return x.st==='error'}).length;
+html+='<div style="padding:4px 14px;font-size:11px;color:#888;border-bottom:1px solid rgba(255,255,255,.08);display:flex;justify-content:space-between;'+(ic?'background:rgba(0,229,255,.06)':'opacity:.65')+'"><span>'+lb+(ic?' <span style="color:#00e5ff">\u25CF LIVE</span>':'')+' </span><span style="font-size:10px">'+bd+'\u2705 '+be+'\u274C / '+bj.length+'</span></div>';
+for(var ji=0;ji<bj.length;ji++){
+var j=bj[ji],p=Math.min(100,Math.max(0,j.pct)),pr=(j.pr||'').substring(0,30),ti=TI[j.type]||'';
+var el=j.st==='running'?ft(Date.now()-j.t0):(j.t1?ft(j.t1-j.t0):'');
+var canCancel=(j.st==='running'||j.st==='pending');
+var xBtn=canCancel?'<button class="ag-x-btn" data-jk="'+j.key+'" title="D\u1EEBng job n\u00E0y">\u00D7</button>':'<span style="width:18px"></span>';
+html+='<div class="ag-job-row '+j.st+'" title="'+(j.err||j.pr||'').replace(/"/g,'&quot;').substring(0,300)+'">'
++'<span class="ag-idx">'+ti+'#'+(j.gi+1)+'</span>'
++'<span class="ag-prompt">'+pr+'</span>'
++'<span style="font-size:10px;color:'+(j.st==='running'?'#00e5ff':'#888')+';min-width:34px;text-align:right;font-weight:'+(j.st==='running'?'600':'400')+'">'+el+'</span>'
++'<span class="ag-bar-wrap"><span class="ag-bar-fill" style="width:'+p+'%"></span></span>'
++'<span class="ag-status">'+(SI[j.st]||'\u23F3')+'</span>'
++xBtn+'</div>';
+if(j.st==='done')dn++;else if(j.st==='error')er++;else if(j.st==='running')rn++;else wt++;
+}}
+body.innerHTML=html;
+var rr=body.querySelector('.ag-job-row.running');if(rr)rr.scrollIntoView({block:'nearest',behavior:'smooth'});
+document.getElementById('ag-tracker-count').textContent=jobs.size;
+document.getElementById('ag-s-done').textContent=dn;
+document.getElementById('ag-s-err').textContent=er;
+document.getElementById('ag-s-run').textContent=rn;
+document.getElementById('ag-s-wait').textContent=wt;
+var cb=document.getElementById('ag-cancel-btn');
+if(cb)cb.style.display=(rn+wt)>0?'inline-block':'none';
+panel.style.display=jobs.size>0?'flex':'none';
+}
+setInterval(function(){var hr=false;for(var j of jobs.values()){if(j.st==='running'){hr=true;break}}if(hr)render()},1000);
+function hook(){if(!window.electronAPI)return false;if(window.__tH)return true;if(window.electronAPI.onProgress)window.electronAPI.onProgress(onProg);window.__tH=true;return true}
+window.__trackerReset=function(){/* no-op: keep history, new batch auto-separates */};
+var ha=0,hi=setInterval(function(){if(hook()||++ha>60)clearInterval(hi)},1000);
 })();
 </script>
 </body>

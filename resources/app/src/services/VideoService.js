@@ -9,6 +9,16 @@ const AuthService = require('./AuthService');
 class VideoService {
   constructor() {
     this.activeJobs = new Map();
+    this._cancelled = false;
+  }
+
+  cancelAll() {
+    this._cancelled = true;
+    console.log('[VideoService] ⛔ Cancel requested');
+  }
+
+  resetCancel() {
+    this._cancelled = false;
   }
 
   /**
@@ -154,7 +164,9 @@ class VideoService {
           if (!result.error) result.error = msg;
         }
         if (mr?.isSoftBlock || mr?.isDisallowed) {
-          if (!result.error) result.error = `Content blocked: softBlock=${mr.isSoftBlock}, disallowed=${mr.isDisallowed}`;
+          result.error = `⛔ Content blocked by moderation (softBlock=${mr.isSoftBlock}, disallowed=${mr.isDisallowed})`;
+          console.warn(`[VideoService] ⛔ MODERATION BLOCK detected`);
+          return result; // Return immediately, no point continuing
         }
 
         // Video progress
@@ -172,6 +184,12 @@ class VideoService {
             const msg = typeof vr.error === 'string' ? vr.error : vr.error.message || JSON.stringify(vr.error);
             if (!result.error) result.error = msg;
           }
+          // Check for moderation flags in video response
+          if (vr.isSoftBlock || vr.isDisallowed || vr.blocked) {
+            result.error = `⛔ Video blocked by moderation at ${result.progress}%`;
+            console.warn(`[VideoService] ⛔ VIDEO MODERATION BLOCK at ${result.progress}%`);
+            return result;
+          }
         }
       } catch (_) {
         // Ignore parse errors
@@ -185,7 +203,7 @@ class VideoService {
     }
 
     if (!result.videoUrl && !result.error) {
-      result.error = `Video generation stopped at ${result.progress}% - no video URL returned`;
+      result.error = `Video generation stopped at ${result.progress}% — no video URL returned (possible moderation block)`;
     }
 
     return result;
@@ -353,7 +371,7 @@ class VideoService {
             headers: this.buildHeaders(session.capturedHeaders, cookieStr),
             responseType: 'text',
             validateStatus: () => true,
-            timeout: 300000, // 5 min
+            timeout: 180000, // 3 min max
           }
         );
 
@@ -424,7 +442,7 @@ class VideoService {
   async generateBatch(prompts, session, config = VIDEO_CONFIG, onProgress = null, startIdx = 0) {
     const N = prompts.length;
     const requestedConcurrency = Number(config.batchSize || PROCESSING_CONFIG.BATCH_SIZE || 10);
-    const CONCURRENCY = Math.max(1, Math.min(requestedConcurrency, 5));
+    const CONCURRENCY = Math.max(1, Math.min(requestedConcurrency, 2));
     const outputFolder = config.outputFolder || PATHS.VIDEO_DIR;
     const label = `Acc${session.accIdx + 1}`;
 
@@ -436,6 +454,10 @@ class VideoService {
 
     async function worker() {
       while (nextIdx < N) {
+        if (self._cancelled) {
+          console.log(`[VideoService] [${label}] ⛔ Cancelled, stopping worker`);
+          break;
+        }
         const myIdx = nextIdx++;
         const prompt = prompts[myIdx];
         const globalNum = startIdx + myIdx + 1; // 1-based global number
