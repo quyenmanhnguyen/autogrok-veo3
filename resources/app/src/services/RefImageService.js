@@ -15,6 +15,16 @@ const path = require('path');
 class RefImageService {
     constructor() {
         this.activeJobs = new Map();
+        this._cancelled = false;
+    }
+
+    cancelAll() {
+        this._cancelled = true;
+        console.log('[RefImageService] ⛔ Cancel requested');
+    }
+
+    resetCancel() {
+        this._cancelled = false;
     }
 
     formatCookies(cookies) {
@@ -146,13 +156,27 @@ class RefImageService {
     }
 
     /**
-     * Build request body for ref image generation (imagine-image-edit model)
-     * Now includes enableNsfw, enablePro, and correct imageGenerationCount
+     * Build request body for ref image generation (imagine-image-edit model).
+     *
+     * Body shape verified by capturing the outbound POST that grok.com/imagine
+     * sends when editing a reference image. Web sends only the fields below —
+     * no enableNsfw, no enablePro, no toolOverrides. We mirror the web payload
+     * exactly to avoid the server silently bypassing the ref-edit pipeline
+     * because of unrecognized fields.
      */
     buildRefImageBody(prompt, imageUrls, parentPostId, config = {}) {
-        const imageCount = config.imageGenerationCount || config.count || IMAGE_CONFIG.imageGenerationCount || 4;
-        const enableNsfw = config.enableNsfw === false ? false : true;
-        const enablePro = config.enablePro !== false ? true : false;
+        // Web defaults to 2 for ref-edit; respect caller override but cap to 4
+        // since the server has been observed to ignore higher counts here.
+        const imageCount = Math.min(
+            config.imageGenerationCount || config.count || 2,
+            4
+        );
+        // NOTE: Body shape is verified by capturing the outbound POST that
+        // grok.com/imagine sends when editing a reference image. The web app
+        // does NOT send enableNsfw / enablePro / toolOverrides here, and uses
+        // imageEditModel = 'imagine' (not 'imagine-x-1'). The server has been
+        // observed to silently bypass the ref-edit pipeline when extra fields
+        // are present, so we mirror the captured payload exactly.
         return {
             temporary: true,
             modelName: MODEL_CONFIG.REF_IMAGE_MODEL,
@@ -163,21 +187,18 @@ class RefImageService {
             enableImageStreaming: true,
             imageGenerationCount: imageCount,
             forceConcise: false,
-            toolOverrides: { imageGen: true },
             enableSideBySide: true,
-            enableNsfw,
-            enablePro,
             sendFinalMetadata: true,
             isReasoning: false,
             disableTextFollowUps: true,
             responseMetadata: {
                 modelConfigOverride: {
                     modelMap: {
+                        imageEditModel: 'imagine',
                         imageEditModelConfig: {
                             imageReferences: imageUrls,
                             parentPostId: parentPostId,
                         },
-                        imageEditModel: 'imagine',
                     },
                 },
             },
@@ -637,8 +658,266 @@ class RefImageService {
     }
 
     /**
+     * Generate ref images via browser page context (same technique as ImageService.generateViaBrowser).
+     * Makes the REST call from INSIDE the browser page (has real cookies/CORS/auth),
+     * then race-downloads images from every CDN URL variant before moderation blurs them.
+     * Returns standard { title, imageUrls, imageBase64, error, status } or null on failure.
+     */
+    async generateViaBrowser(prompt, uploadResult, session, config = {}) {
+        if (!session._page) return null;
+        const page = session._page;
+
+        try {
+            const currentUrl = page.url();
+            if (!currentUrl.includes('grok.com')) {
+                await page.goto('https://grok.com/', { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {});
+            }
+
+            const body = this.buildRefImageBody(prompt, uploadResult.imageUrls, uploadResult.parentPostId, config);
+            const apiUrl = API_ENDPOINTS.API_URL;
+            const assetsBase = API_ENDPOINTS.ASSETS_BASE_URL;
+            const restAssetBase = 'https://grok.com/rest/app-chat/asset/';
+
+            console.log('[RefImageService] 🌐 Browser-context ref generation starting...');
+
+            // Hard timeout: if the streaming response never closes (e.g. server
+            // keeps the connection open), the inner `while (true)` reader loop
+            // would hang the page.evaluate promise forever and lock the worker.
+            // Mirror the pattern used by generateViaWebSocket above.
+            const BROWSER_HARD_TIMEOUT = 120000;
+            const evalPromise = page.evaluate(async (apiUrl, body, assetsBase, restAssetBase) => {
+                const results = { imageUrls: [], imageData: [], errors: [], debug: [], title: '' };
+
+                async function fetchImageData(url, imageIndex, tag) {
+                    try {
+                        const r = await fetch(url, { credentials: 'include' });
+                        if (!r.ok) { results.debug.push(tag + ': HTTP ' + r.status); return null; }
+                        const blob = await r.blob();
+                        if (blob.size < 500) { results.debug.push(tag + ': too small ' + blob.size); return null; }
+                        return new Promise(resolve => {
+                            const fr = new FileReader();
+                            fr.onload = () => resolve({
+                                dataUrl: fr.result, size: blob.size, type: blob.type,
+                                sourceUrl: url, imageIndex, tag,
+                            });
+                            fr.onerror = () => resolve(null);
+                            fr.readAsDataURL(blob);
+                        });
+                    } catch (e) {
+                        results.debug.push(tag + ': ' + e.message);
+                        return null;
+                    }
+                }
+
+                function buildUrlVariants(imgUrl) {
+                    const urls = [];
+                    const relPath = imgUrl.replace(/^\/+/, '');
+                    urls.push(assetsBase + relPath);
+                    urls.push(restAssetBase + relPath);
+                    const stripped = relPath.replace(/-part-\d+\//, '/');
+                    if (stripped !== relPath) {
+                        urls.push(assetsBase + stripped);
+                        urls.push(restAssetBase + stripped);
+                    }
+                    return urls;
+                }
+
+                try {
+                    const resp = await fetch(apiUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(body),
+                        credentials: 'include',
+                    });
+
+                    if (!resp.ok) {
+                        results.errors.push('HTTP ' + resp.status);
+                        return results;
+                    }
+
+                    const reader = resp.body.getReader();
+                    const decoder = new TextDecoder();
+                    let buffer = '';
+                    const seenUrls = new Set();
+                    const fetchPromises = [];
+                    const imageTracker = new Map();
+
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+
+                        buffer += decoder.decode(value, { stream: true });
+                        const lines = buffer.split('\n');
+                        buffer = lines.pop();
+
+                        for (const line of lines) {
+                            if (!line.trim()) continue;
+                            try {
+                                const j = JSON.parse(line);
+
+                                // Parse cardAttachment.jsonData.image_chunk (primary)
+                                const cardJson = j.result?.response?.cardAttachment?.jsonData;
+                                if (cardJson) {
+                                    try {
+                                        const card = JSON.parse(cardJson);
+                                        const chunk = card?.image_chunk;
+                                        if (chunk?.imageUuid) {
+                                            const idx = chunk.imageIndex || 0;
+                                            const existing = imageTracker.get(chunk.imageUuid) || { urls: [] };
+                                            if (chunk.progress != null) existing.progress = Math.max(existing.progress || 0, chunk.progress);
+                                            if (chunk.imageIndex != null) existing.imageIndex = chunk.imageIndex;
+                                            if (chunk.moderated) existing.moderated = true;
+                                            imageTracker.set(chunk.imageUuid, existing);
+
+                                            if (chunk.imageUrl && !seenUrls.has(chunk.imageUrl)) {
+                                                seenUrls.add(chunk.imageUrl);
+                                                existing.urls.push(chunk.imageUrl);
+                                                results.imageUrls.push({
+                                                    url: chunk.imageUrl,
+                                                    progress: chunk.progress || 0,
+                                                    moderated: chunk.moderated || false,
+                                                    imageIndex: idx,
+                                                });
+                                                results.debug.push('URL spotted at progress=' + chunk.progress + ': ' + chunk.imageUrl.substring(chunk.imageUrl.indexOf('generated')));
+
+                                                const variants = buildUrlVariants(chunk.imageUrl);
+                                                for (let vi = 0; vi < variants.length; vi++) {
+                                                    fetchPromises.push(fetchImageData(variants[vi], idx, 'race_p' + chunk.progress + '_v' + vi));
+                                                }
+                                            }
+                                        }
+                                    } catch (_) {}
+                                }
+
+                                // Fallback: streamingImageGenerationResponse
+                                const ir = j.result?.response?.streamingImageGenerationResponse;
+                                if (ir?.imageUrl && !seenUrls.has(ir.imageUrl)) {
+                                    seenUrls.add(ir.imageUrl);
+                                    results.imageUrls.push({
+                                        url: ir.imageUrl,
+                                        progress: ir.progress,
+                                        moderated: ir.moderated || false,
+                                        imageIndex: ir.imageIndex || 0,
+                                    });
+                                    const variants = buildUrlVariants(ir.imageUrl);
+                                    for (let vi = 0; vi < variants.length; vi++) {
+                                        fetchPromises.push(fetchImageData(variants[vi], ir.imageIndex || 0, 'ir_v' + vi));
+                                    }
+                                }
+
+                                // Inline imageBytes (rare but possible)
+                                if (ir && ir.imageBytes) {
+                                    results.imageData.push({
+                                        dataUrl: 'data:image/jpeg;base64,' + ir.imageBytes,
+                                        size: ir.imageBytes.length * 3 / 4,
+                                        imageIndex: ir.imageIndex || results.imageData.length,
+                                        tag: 'inline_bytes',
+                                    });
+                                }
+
+                                if (j.result?.title?.newTitle) {
+                                    results.title = j.result.title.newTitle;
+                                }
+                            } catch (_) {}
+                        }
+                    }
+
+                    // Stream ended — retry final URLs aggressively
+                    const retryDelays = [0, 100, 300, 750, 1500, 3000];
+                    for (const [uuid, info] of imageTracker) {
+                        if (info.urls.length > 0) {
+                            for (const imgUrl of info.urls) {
+                                const stripped = imgUrl.replace(/-part-\d+\//, '/');
+                                const relStripped = stripped.replace(/^\/+/, '');
+                                const relPart = imgUrl.replace(/^\/+/, '');
+                                for (let ri = 0; ri < retryDelays.length; ri++) {
+                                    const delay = retryDelays[ri];
+                                    const tag = 'retry_' + delay + 'ms';
+                                    if (delay === 0) {
+                                        fetchPromises.push(fetchImageData(assetsBase + relStripped, info.imageIndex || 0, tag + '_cdn'));
+                                        fetchPromises.push(fetchImageData(restAssetBase + relStripped, info.imageIndex || 0, tag + '_rest'));
+                                        fetchPromises.push(fetchImageData(assetsBase + relPart, info.imageIndex || 0, tag + '_part'));
+                                    } else {
+                                        fetchPromises.push(
+                                            new Promise(r => setTimeout(r, delay))
+                                                .then(() => fetchImageData(assetsBase + relStripped, info.imageIndex || 0, tag + '_cdn'))
+                                        );
+                                        fetchPromises.push(
+                                            new Promise(r => setTimeout(r, delay))
+                                                .then(() => fetchImageData(restAssetBase + relStripped, info.imageIndex || 0, tag + '_rest'))
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    const allResults = await Promise.all(fetchPromises);
+                    const bestByIndex = new Map();
+                    for (const fr of allResults) {
+                        if (!fr || !fr.dataUrl) continue;
+                        const idx = fr.imageIndex || 0;
+                        const existing = bestByIndex.get(idx);
+                        results.debug.push(fr.tag + ': ' + fr.size + ' bytes (idx=' + idx + ')');
+                        if (!existing || fr.size > existing.size) {
+                            bestByIndex.set(idx, fr);
+                        }
+                    }
+
+                    for (const [, best] of bestByIndex) {
+                        results.imageData.push(best);
+                        results.debug.push('BEST idx=' + best.imageIndex + ': ' + best.size + ' bytes from ' + best.tag);
+                    }
+                } catch (e) {
+                    results.errors.push(e.message);
+                }
+
+                return results;
+            }, apiUrl, body, assetsBase, restAssetBase);
+            const timeoutPromise = new Promise((_, reject) =>
+                setTimeout(() => reject(new Error('Browser ref generation hard timeout')), BROWSER_HARD_TIMEOUT)
+            );
+            const browserResult = await Promise.race([evalPromise, timeoutPromise]);
+
+            if (browserResult.debug?.length > 0) {
+                console.log('[RefImageService] 🌐 Browser debug:\n  ' + browserResult.debug.join('\n  '));
+            }
+            console.log(`[RefImageService] 🌐 Browser result: ${browserResult.imageData.length} images fetched, ${browserResult.imageUrls.length} URLs seen, ${browserResult.errors.length} errors`);
+
+            const result = {
+                title: browserResult.title || '',
+                imageUrls: [],
+                imageBase64: [],
+                error: null,
+                status: 200,
+            };
+
+            for (const img of browserResult.imageData) {
+                result.imageBase64.push({
+                    data: img.dataUrl,
+                    imageIndex: img.imageIndex,
+                    size: img.size,
+                });
+            }
+
+            for (const u of browserResult.imageUrls) {
+                result.imageUrls.push({ imageUrl: u.url, imageIndex: u.imageIndex });
+            }
+
+            if (result.imageBase64.length === 0 && result.imageUrls.length === 0) {
+                result.error = browserResult.errors.length > 0 ? browserResult.errors.join(' | ') : 'no images returned';
+            }
+
+            return result;
+        } catch (err) {
+            console.log('[RefImageService] 🌐 Browser ref generation error: ' + err.message);
+            return null;
+        }
+    }
+
+    /**
      * Generate one image with ref images
-     * PRIMARY: WebSocket (bypass blur) → FALLBACK: REST API
+     * TIER 1: WebSocket (inline blobs, bypass CDN) → TIER 2: Browser REST → TIER 3: Axios REST
      */
     async generateOne(item, session, config = {}, onProgress = null) {
         const { prompt, refImagePaths } = item;
@@ -657,10 +936,17 @@ class RefImageService {
                 }
                 if (uploadResult.error) return { imageUrls: [], imageBase64: [], error: uploadResult.error, status: 0 };
 
-                // PRIMARY: WebSocket generation (bypass CDN moderation blur)
-                if (session._page) {
+                // NOTE: grok.com/imagine sends ref-edit requests via REST chat
+                // (verified by capturing the outbound POST). The Imagine WS
+                // endpoint silently ignores the ref-image properties, so any
+                // images returned through WS are NOT actually conditioned on
+                // the reference — exactly the bug the user reported. We skip
+                // WS by default to avoid both the bad output and the ~30s
+                // timeout that occurs when the WS attempt fails.
+                // To experiment with WS again, set config.useRefWebSocket = true.
+                if (config.useRefWebSocket && session._page) {
                     try {
-                        console.log(`[RefImageService] 🔌 Trying WS generation (anti-blur)...`);
+                        console.log(`[RefImageService] 🔌 WS generation (experimental, opt-in)...`);
                         const wsResult = await this.generateViaWebSocket(
                             prompt, uploadResult.imageUrls, uploadResult.parentPostId, session, config
                         );
@@ -669,14 +955,30 @@ class RefImageService {
                             if (onProgress) onProgress({ progress: 100, status: 'completed' });
                             return wsResult;
                         }
-                        console.log('[RefImageService] 🔌 WS no images, falling back to REST...');
+                        console.log('[RefImageService] 🔌 WS no images, falling back to Browser REST...');
                     } catch (wsErr) {
-                        console.log(`[RefImageService] 🔌 WS error: ${wsErr.message}, falling back to REST...`);
+                        console.log(`[RefImageService] 🔌 WS error: ${wsErr.message}, falling back to Browser REST...`);
                     }
                 }
 
-                // FALLBACK: REST API
-                console.log(`[RefImageService] 🎨 REST generating with ${uploadResult.imageUrls.length} ref(s): ${prompt.substring(0, 50)}...`);
+                // ── TIER 2: Browser-context REST (race-download before moderation) ──
+                if (session._page) {
+                    try {
+                        console.log(`[RefImageService] 🌐 Browser REST generation starting...`);
+                        const browserResult = await this.generateViaBrowser(prompt, uploadResult, session, config);
+                        if (browserResult && (browserResult.imageBase64.length > 0 || browserResult.imageUrls.length > 0)) {
+                            console.log(`[RefImageService] 🌐 Browser SUCCESS: ${browserResult.imageBase64.length} base64 + ${browserResult.imageUrls.length} URLs`);
+                            if (onProgress) onProgress({ progress: 100, status: 'completed' });
+                            return browserResult;
+                        }
+                        console.log('[RefImageService] 🌐 Browser no images, falling back to axios REST...');
+                    } catch (browserErr) {
+                        console.log(`[RefImageService] 🌐 Browser error: ${browserErr.message}, falling back to axios REST...`);
+                    }
+                }
+
+                // FALLBACK: REST via axios (may return blurred CDN images)
+                console.log(`[RefImageService] 🎨 Axios REST generating with ${uploadResult.imageUrls.length} ref(s): ${prompt.substring(0, 50)}...`);
                 const cookieStr = this.formatCookies(session.cookies);
                 const body = this.buildRefImageBody(prompt, uploadResult.imageUrls, uploadResult.parentPostId, config);
 
@@ -732,11 +1034,20 @@ class RefImageService {
 
         async function worker() {
             while (nextIdx < N) {
+                if (self._cancelled) {
+                    console.log(`[RefImageService] [${label}] ⛔ Cancelled, stopping worker`);
+                    break;
+                }
                 const myIdx = nextIdx++;
                 const item = items[myIdx];
                 const globalNum = startIdx + myIdx + 1;
 
                 console.log(`[RefImageService] [${label}] 🖼️✨ #${myIdx + 1}/${N} (shot${String(globalNum).padStart(4, '0')}) refs=${item.refImagePaths.length} | ${item.prompt.substring(0, 50)}...`);
+
+                // Emit 0-progress "started" event immediately so the tracker UI
+                // shows the job as pending right away instead of staying blank
+                // for several seconds while upload + ref-edit pipeline run.
+                if (onProgress) onProgress(item.prompt, 0, null, myIdx);
 
                 const result = await self.generateOne(item, session, config, (prog) => {
                     if (onProgress) onProgress(item.prompt, prog.progress, null, myIdx);
@@ -780,18 +1091,41 @@ class RefImageService {
                     }
                 }
 
-                // Download URLs — only if base64 quality is insufficient
+                // Download URLs — ALWAYS try for ref images (REST rarely provides good base64)
+                // Browser download is PRIMARY to bypass CDN moderation blur
                 const bestBase64Size = savedFiles.length > 0 ? Math.max(...(result.imageBase64 || []).map(i => i.size || 0), 0) : 0;
-                if ((result.imageUrls || []).length > 0 && bestBase64Size < 50000) {
+                if ((result.imageUrls || []).length > 0) {
                     for (const img of result.imageUrls) {
                         try {
-                            let dl = await self.downloadImage(img.imageUrl, session);
-                            // Browser fallback for small/blurred downloads
-                            if (dl && dl.size < 50000 && session._page) {
-                                const browserDl = await self.downloadViaBrowser(img.imageUrl, session);
-                                if (browserDl && browserDl.size > dl.size) dl = browserDl;
+                            let dl = null;
+
+                            // PRIMARY: Browser-context download (bypasses server-side moderation blur)
+                            if (session._page) {
+                                console.log(`[RefImageService] [${label}] 🌐 Browser download (anti-blur): ${img.imageUrl.substring(img.imageUrl.lastIndexOf('/') - 20)}`);
+                                dl = await self.downloadViaBrowser(img.imageUrl, session);
+                                if (dl) {
+                                    console.log(`[RefImageService] [${label}] 🌐 Browser: ${dl.size} bytes`);
+                                }
+                                // Also try stripped URL (without -part-N) via browser
+                                if ((!dl || dl.size < 50000) && img.imageUrl.includes('-part-')) {
+                                    const strippedUrl = img.imageUrl.replace(/-part-\d+\//, '/');
+                                    const browserDl2 = await self.downloadViaBrowser(strippedUrl, session);
+                                    if (browserDl2 && (!dl || browserDl2.size > dl.size)) {
+                                        console.log(`[RefImageService] [${label}] 🌐 Browser (stripped): ${browserDl2.size} bytes`);
+                                        dl = browserDl2;
+                                    }
+                                }
                             }
-                            if (!dl && session._page) dl = await self.downloadViaBrowser(img.imageUrl, session);
+
+                            // FALLBACK: Axios multi-variant download
+                            if (!dl || dl.size < 50000) {
+                                const axiosDl = await self.downloadImage(img.imageUrl, session);
+                                if (axiosDl && (!dl || axiosDl.size > dl.size)) {
+                                    console.log(`[RefImageService] [${label}] 📡 Axios: ${axiosDl.size} bytes`);
+                                    dl = axiosDl;
+                                }
+                            }
+
                             if (dl && dl.size > bestBase64Size) {
                                 const ext = dl.contentType?.includes('png') ? 'png' : 'jpg';
                                 const cdnIdx = img.imageIndex || 0;
@@ -800,14 +1134,16 @@ class RefImageService {
                                     : `ref_shot${shotNum}_${batchTs}_cdn_i${cdnIdx}.${ext}`;
                                 const filePath = FileService.saveFile(dl.data, filename, outputFolder);
                                 savedFiles.push(filePath);
-                                console.log(`[RefImageService] [${label}] 💾 Saved URL: ${filename} (${dl.size} bytes)`);
+                                console.log(`[RefImageService] [${label}] 💾 Saved URL: ${filename} (${dl.size} bytes${dl.size < 50000 ? ' ⚠️ may be blurred' : ' ✅ full-res'})`);
+                            } else if (dl) {
+                                console.log(`[RefImageService] [${label}] Skipping URL (${dl.size}b <= base64 ${bestBase64Size}b)`);
                             }
                         } catch (error) {
                             console.error(`[RefImageService] [${label}] Download error:`, error.message);
                         }
                     }
                 } else if (bestBase64Size >= 50000) {
-                    console.log(`[RefImageService] [${label}] Skipping URL downloads — good base64 (${bestBase64Size}b)`);
+                    console.log(`[RefImageService] [${label}] No URLs to download, using base64 (${bestBase64Size}b)`);
                 }
 
                 const jobResult = {

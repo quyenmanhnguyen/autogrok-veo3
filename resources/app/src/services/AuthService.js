@@ -199,9 +199,12 @@ class AuthService {
     }
 
     async refreshAllCookies() {
-        for (const [email] of this.activeSessions) {
-            await this.refreshCookies(email);
-        }
+        // Refresh cookies for every active session in parallel.
+        // Sequential awaits used to add ~500ms per account before any job
+        // could start, which made the tracker UI look frozen for several
+        // seconds after the user clicked Start.
+        const emails = Array.from(this.activeSessions.keys());
+        await Promise.all(emails.map(email => this.refreshCookies(email)));
     }
 
     isSessionValid(email, maxAge = 60 * 60 * 1000) {

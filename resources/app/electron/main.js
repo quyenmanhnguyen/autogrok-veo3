@@ -628,6 +628,7 @@ ipcMain.handle('auth:clearSessions', async () => {
 ipcMain.handle('image:generate', async (_, params) => {
     try {
         const { prompts, config, startIdx: baseIdx = 0 } = params;
+        const _batchId = 'img_' + Date.now();
         ImageService.resetCancel();
         const sessions = AuthService.getAllSessions();
 
@@ -655,7 +656,7 @@ ipcMain.handle('image:generate', async (_, params) => {
                 console.log(`[Main] [Acc${session.accIdx + 1}] Processing ${myPrompts.length} images...`);
                 return ImageService.generateBatch(myPrompts, session, config || {}, (prompt, progress, result, localIdx) => {
                     const globalIdx = nameStart + (localIdx != null ? localIdx : 0);
-                    sendProgress('image', { prompt, progress, result, globalIdx });
+                    sendProgress('image', { prompt, progress, result, globalIdx, batchId: _batchId });
                     if (result) {
                         const status = result.success ? 'success' : 'error';
                         const label = result.title || prompt.substring(0, 50);
@@ -684,19 +685,55 @@ ipcMain.handle('image:cancel', async () => {
     return { success: true };
 });
 
+// IPC Handler - Cancel video generation
+ipcMain.handle('video:cancel', async () => {
+    VideoService.cancelAll();
+    sendLog('info', 'Video generation cancelled by user');
+    return { success: true };
+});
+
+// IPC Handler - Cancel I2V generation
+ipcMain.handle('i2v:cancel', async () => {
+    I2VService.cancelAll();
+    sendLog('info', 'I2V generation cancelled by user');
+    return { success: true };
+});
+
+// IPC Handler - Cancel RefImage generation
+ipcMain.handle('refimg:cancel', async () => {
+    RefImageService.cancelAll();
+    sendLog('info', 'RefImage generation cancelled by user');
+    return { success: true };
+});
+
 // IPC Handlers - Video generation (parallel multi-account)
 ipcMain.handle('video:generate', async (_, params) => {
     try {
         const { prompts, config, startIdx: baseIdx = 0 } = params;
+        const _batchId = 'vid_' + Date.now();
+        VideoService.resetCancel();
         const sessions = AuthService.getAllSessions();
 
         if (sessions.length === 0) {
             return { success: false, error: 'No active sessions. Please setup accounts first.' };
         }
 
+        // Duplicate prompts based on videoCount (e.g., 2 = generate 2 videos per prompt)
+        const videoCount = Math.max(1, Math.min(Number(config?.videoCount || 1), 4));
+        let expandedPrompts = prompts;
+        if (videoCount > 1) {
+            expandedPrompts = [];
+            for (const p of prompts) {
+                for (let i = 0; i < videoCount; i++) {
+                    expandedPrompts.push(p);
+                }
+            }
+            sendLog('info', `Video: ${prompts.length} prompts × ${videoCount} copies = ${expandedPrompts.length} total videos`);
+        }
+
         console.log('[Main] Video config received:', JSON.stringify(config, null, 2));
-        const perAcc = Math.ceil(prompts.length / sessions.length);
-        sendLog('info', `Generating ${prompts.length} videos across ${sessions.length} account(s) (${perAcc} per acc)...`);
+        const perAcc = Math.ceil(expandedPrompts.length / sessions.length);
+        sendLog('info', `Generating ${expandedPrompts.length} videos across ${sessions.length} account(s) (${perAcc} per acc)...`);
 
         // Refresh cookies from live browser sessions before generating
         await AuthService.refreshAllCookies();
@@ -707,15 +744,15 @@ ipcMain.handle('video:generate', async (_, params) => {
         const allResults = await Promise.all(
             sessions.map(async (session, ai) => {
                 const sliceStart = ai * perAcc;
-                const sliceEnd = Math.min((ai + 1) * perAcc, prompts.length);
-                const myPrompts = prompts.slice(sliceStart, sliceEnd);
+                const sliceEnd = Math.min((ai + 1) * perAcc, expandedPrompts.length);
+                const myPrompts = expandedPrompts.slice(sliceStart, sliceEnd);
                 if (myPrompts.length === 0) return [];
                 const nameStart = baseIdx + sliceStart;
                 sendLog('info', `[Acc${session.accIdx + 1}] 📋 Assigned prompts #${nameStart + 1}→#${nameStart + myPrompts.length} (${myPrompts.length} items)`);
                 console.log(`[Main] [Acc${session.accIdx + 1}] Processing ${myPrompts.length} videos...`);
                 return VideoService.generateBatch(myPrompts, session, config, (prompt, progress, result, localIdx) => {
                     const globalIdx = nameStart + (localIdx != null ? localIdx : 0);
-                    sendProgress('video', { prompt, progress, result, globalIdx });
+                    sendProgress('video', { prompt, progress, result, globalIdx, batchId: _batchId });
                     if (result) {
                         const status = result.success ? 'success' : 'error';
                         const label = result.title || prompt.substring(0, 50);
@@ -888,16 +925,34 @@ ipcMain.handle('video:merge', async (_, params) => {
 ipcMain.handle('i2v:generate', async (_, params) => {
     try {
         const { items, config, startIdx: baseIdx = 0 } = params;
+        const _batchId = 'i2v_' + Date.now();
+        I2VService.resetCancel();
         const sessions = AuthService.getAllSessions();
 
         if (sessions.length === 0) {
             return { success: false, error: 'No active sessions. Please setup accounts first.' };
         }
 
-        const perAcc = Math.ceil(items.length / sessions.length);
-        sendLog('info', `Generating ${items.length} I2V videos across ${sessions.length} account(s) (${perAcc} per acc)...`);
-        const perAccountConcurrency = Math.max(1, Math.min(Number(config?.batchSize || 10), 30));
-        sendLog('info', `I2V concurrency: ${sessions.length} account(s) x up to ${perAccountConcurrency}/account = up to ${sessions.length * perAccountConcurrency} parallel job(s)`);
+        // Duplicate items based on videoCount (e.g., 2 = generate 2 videos per image)
+        const videoCount = Math.max(1, Math.min(Number(config?.videoCount || 1), 4));
+        let expandedItems = items;
+        if (videoCount > 1) {
+            expandedItems = [];
+            for (const item of items) {
+                for (let i = 0; i < videoCount; i++) {
+                    expandedItems.push({ ...item, _copyIdx: i });
+                }
+            }
+            sendLog('info', `I2V: ${items.length} images × ${videoCount} copies = ${expandedItems.length} total videos`);
+        }
+
+        const perAcc = Math.ceil(expandedItems.length / sessions.length);
+        sendLog('info', `Generating ${expandedItems.length} I2V videos across ${sessions.length} account(s) (${perAcc} per acc)...`);
+        // Mirror the cap applied inside I2VService.generateBatch (max 2 per
+        // account); reading config.batchSize keeps the log accurate even when
+        // the renderer asks for higher numbers.
+        const perAccountConcurrency = Math.max(1, Math.min(Number(config?.batchSize || 2), 2));
+        sendLog('info', `I2V concurrency: ${sessions.length} account(s) x up to ${perAccountConcurrency}/account`);
 
         // Refresh cookies from live browser sessions before generating
         await AuthService.refreshAllCookies();
@@ -908,8 +963,8 @@ ipcMain.handle('i2v:generate', async (_, params) => {
         const allResults = await Promise.all(
             sessions.map(async (session, ai) => {
                 const sliceStart = ai * perAcc;
-                const sliceEnd = Math.min((ai + 1) * perAcc, items.length);
-                const myItems = items.slice(sliceStart, sliceEnd);
+                const sliceEnd = Math.min((ai + 1) * perAcc, expandedItems.length);
+                const myItems = expandedItems.slice(sliceStart, sliceEnd);
                 if (myItems.length === 0) return [];
                 const nameStart = baseIdx + sliceStart;
                 const imgNames = myItems.map(it => path.basename(it.imagePath)).join(', ');
@@ -917,7 +972,7 @@ ipcMain.handle('i2v:generate', async (_, params) => {
                 console.log(`[Main] [Acc${session.accIdx + 1}] Processing ${myItems.length} I2V items...`);
                 return I2VService.generateBatch(myItems, session, config, (item, progress, result, localIdx) => {
                     const globalIdx = nameStart + (localIdx != null ? localIdx : 0);
-                    sendProgress('i2v', { item, progress, result, globalIdx });
+                    sendProgress('i2v', { item, progress, result, globalIdx, batchId: _batchId });
                     if (result) {
                         const status = result.success ? 'success' : 'error';
                         const imgName = item.imagePath ? path.basename(item.imagePath) : '';
@@ -944,6 +999,8 @@ ipcMain.handle('i2v:generate', async (_, params) => {
 ipcMain.handle('refimg:generate', async (_, params) => {
     try {
         const { items, config, startIdx: baseIdx = 0 } = params;
+        const _batchId = 'ref_' + Date.now();
+        RefImageService.resetCancel();
         const sessions = AuthService.getAllSessions();
 
         if (sessions.length === 0) {
@@ -970,7 +1027,7 @@ ipcMain.handle('refimg:generate', async (_, params) => {
                 console.log(`[Main] [Acc${session.accIdx + 1}] Processing ${myItems.length} ref-image items...`);
                 return RefImageService.generateBatch(myItems, session, config || {}, (prompt, progress, result, localIdx) => {
                     const globalIdx = nameStart + (localIdx != null ? localIdx : 0);
-                    sendProgress('refimg', { prompt, progress, result, globalIdx });
+                    sendProgress('refimg', { prompt, progress, result, globalIdx, batchId: _batchId });
                     if (result) {
                         const status = result.success ? 'success' : 'error';
                         const label = result.title || prompt.substring(0, 50);

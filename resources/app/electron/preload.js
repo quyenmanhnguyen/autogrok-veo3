@@ -46,14 +46,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
     video: {
         generate: (params) => ipcRenderer.invoke('video:generate', params),
         merge: (params) => ipcRenderer.invoke('video:merge', params),
+        cancel: () => ipcRenderer.invoke('video:cancel'),
     },
 
     i2v: {
         generate: (params) => ipcRenderer.invoke('i2v:generate', params),
+        cancel: () => ipcRenderer.invoke('i2v:cancel'),
     },
 
     refimg: {
         generate: (params) => ipcRenderer.invoke('refimg:generate', params),
+        cancel: () => ipcRenderer.invoke('refimg:cancel'),
     },
 
     onProgress: (callback) => {

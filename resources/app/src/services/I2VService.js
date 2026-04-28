@@ -9,6 +9,16 @@ const path = require('path');
 class I2VService {
     constructor() {
         this.activeJobs = new Map();
+        this._cancelled = false;
+    }
+
+    cancelAll() {
+        this._cancelled = true;
+        console.log('[I2VService] ⛔ Cancel requested');
+    }
+
+    resetCancel() {
+        this._cancelled = false;
     }
 
     /**
@@ -145,11 +155,18 @@ class I2VService {
      */
     buildI2VBody(prompt, fileMetadataId, imageUrl, config = {}) {
         // Merge UI config with I2V_CONFIG defaults, map field names
+        // Validate values are within I2V-allowed options (reject leaked VIDEO_CONFIG values)
+        const validLength = config.videoLength && I2V_CONFIG.lengthOptions.includes(Number(config.videoLength))
+            ? Number(config.videoLength) : I2V_CONFIG.videoLength;
+        const validResolution = (config.resolutionName || config.resolution) && I2V_CONFIG.resolutionOptions.includes(config.resolutionName || config.resolution)
+            ? (config.resolutionName || config.resolution) : I2V_CONFIG.resolutionName;
+        const validAspect = config.aspectRatio && I2V_CONFIG.aspectRatioOptions.includes(config.aspectRatio)
+            ? config.aspectRatio : I2V_CONFIG.aspectRatio;
         const mergedConfig = {
-            aspectRatio: config.aspectRatio || I2V_CONFIG.aspectRatio,
-            videoLength: config.videoLength || I2V_CONFIG.videoLength,
+            aspectRatio: validAspect,
+            videoLength: validLength,
             isVideoEdit: config.isVideoEdit !== undefined ? config.isVideoEdit : I2V_CONFIG.isVideoEdit,
-            resolutionName: config.resolutionName || config.resolution || I2V_CONFIG.resolutionName,
+            resolutionName: validResolution,
         };
 
         console.log(`[I2VService] buildI2VBody config: aspectRatio=${mergedConfig.aspectRatio}, videoLength=${mergedConfig.videoLength}, resolution=${mergedConfig.resolutionName}`);
@@ -201,81 +218,124 @@ class I2VService {
 
         let buffer = '';
         let lastLog = 0;
+        let lastProgressTime = Date.now();
+        const STALL_TIMEOUT_MS = 90000; // 90s stall → abort
+        let aborted = false;
 
-        for await (const chunk of stream) {
-            const chunkStr = chunk.toString();
-            buffer += chunkStr;
+        // Wrap stream iteration with stall detection
+        const iterateWithTimeout = async () => {
+            for await (const chunk of stream) {
+                const now = Date.now();
+                const chunkStr = chunk.toString();
+                buffer += chunkStr;
 
-            const lines = buffer.split('\n');
-            buffer = lines.pop(); // Keep incomplete line
+                const lines = buffer.split('\n');
+                buffer = lines.pop(); // Keep incomplete line
 
-            for (const line of lines) {
-                if (!line.trim()) continue;
+                for (const line of lines) {
+                    if (!line.trim()) continue;
 
-                try {
-                    const j = JSON.parse(line);
-                    if (j.result?.title?.newTitle) result.title = j.result.title.newTitle;
+                    try {
+                        const j = JSON.parse(line);
+                        if (j.result?.title?.newTitle) result.title = j.result.title.newTitle;
 
-                    // Errors
-                    if (j.error) {
-                        const msg = typeof j.error === 'string' ? j.error : j.error.message || JSON.stringify(j.error);
-                        if (!result.error) result.error = msg;
-                    }
-                    if (j.result?.error) {
-                        const msg = typeof j.result.error === 'string' ? j.result.error : j.result.error.message || JSON.stringify(j.result.error);
-                        if (!result.error) result.error = msg;
-                    }
-
-                    const mr = j.result?.response?.modelResponse;
-                    if (mr?.error) {
-                        const msg = typeof mr.error === 'string' ? mr.error : mr.error.message || JSON.stringify(mr.error);
-                        if (!result.error) result.error = msg;
-                    }
-                    if (mr?.isSoftBlock || mr?.isDisallowed) {
-                        if (!result.error) result.error = `Content blocked: softBlock=${mr.isSoftBlock}, disallowed=${mr.isDisallowed}`;
-                    }
-
-                    // Video progress
-                    const vr = j.result?.response?.streamingVideoGenerationResponse;
-                    if (vr) {
-                        if (vr.videoId) result.videoId = vr.videoId;
-                        if (vr.assetId) result.videoId = result.videoId || vr.assetId;
-
-                        // Extract userId from imageReference
-                        if (vr.imageReference && !result.userId) {
-                            const m = vr.imageReference.match(/\/users\/([^/]+)\//);
-                            if (m) result.userId = m[1];
-                        }
-
-                        const newProgress = vr.progress || result.progress;
-                        if (newProgress > result.progress) {
-                            result.progress = newProgress;
-                            // Log every 20%
-                            if (result.progress - lastLog >= 20) {
-                                console.log(`[I2VService] Progress: ${result.progress}%`);
-                                lastLog = result.progress;
-                                if (onProgress) onProgress({ progress: result.progress });
-                            }
-                        }
-
-                        if (vr.videoUrl) {
-                            result.videoUrl = vr.videoUrl;
-                            console.log(`[I2VService] 🎉 Video ready! url=${result.videoUrl.substring(0, 50)}`);
-                        }
-
-                        if (vr.error) {
-                            const msg = typeof vr.error === 'string' ? vr.error : vr.error.message || JSON.stringify(vr.error);
+                        // Errors
+                        if (j.error) {
+                            const msg = typeof j.error === 'string' ? j.error : j.error.message || JSON.stringify(j.error);
                             if (!result.error) result.error = msg;
                         }
+                        if (j.result?.error) {
+                            const msg = typeof j.result.error === 'string' ? j.result.error : j.result.error.message || JSON.stringify(j.result.error);
+                            if (!result.error) result.error = msg;
+                        }
+
+                        const mr = j.result?.response?.modelResponse;
+                        if (mr?.error) {
+                            const msg = typeof mr.error === 'string' ? mr.error : mr.error.message || JSON.stringify(mr.error);
+                            if (!result.error) result.error = msg;
+                        }
+                        // Detect content moderation block early
+                        if (mr?.isSoftBlock || mr?.isDisallowed) {
+                            result.error = `⛔ Content blocked by moderation (softBlock=${mr.isSoftBlock}, disallowed=${mr.isDisallowed})`;
+                            console.warn(`[I2VService] ⛔ MODERATION BLOCK detected at ${result.progress}% — aborting stream`);
+                            aborted = true;
+                            try { stream.destroy && stream.destroy(); } catch (_) {}
+                            return;
+                        }
+
+                        // Video progress
+                        const vr = j.result?.response?.streamingVideoGenerationResponse;
+                        if (vr) {
+                            if (vr.videoId) result.videoId = vr.videoId;
+                            if (vr.assetId) result.videoId = result.videoId || vr.assetId;
+
+                            // Extract userId from imageReference
+                            if (vr.imageReference && !result.userId) {
+                                const m = vr.imageReference.match(/\/users\/([^/]+)\//);
+                                if (m) result.userId = m[1];
+                            }
+
+                            const newProgress = vr.progress || result.progress;
+                            if (newProgress > result.progress) {
+                                result.progress = newProgress;
+                                lastProgressTime = now; // Reset stall timer on real progress
+                                // Log every 20%
+                                if (result.progress - lastLog >= 20) {
+                                    console.log(`[I2VService] Progress: ${result.progress}%`);
+                                    lastLog = result.progress;
+                                    if (onProgress) onProgress({ progress: result.progress });
+                                }
+                            }
+
+                            if (vr.videoUrl) {
+                                result.videoUrl = vr.videoUrl;
+                                console.log(`[I2VService] 🎉 Video ready! url=${result.videoUrl.substring(0, 50)}`);
+                            }
+
+                            if (vr.error) {
+                                const msg = typeof vr.error === 'string' ? vr.error : vr.error.message || JSON.stringify(vr.error);
+                                if (!result.error) result.error = msg;
+                            }
+
+                            // Check for moderation flags in video response
+                            if (vr.isSoftBlock || vr.isDisallowed || vr.blocked) {
+                                result.error = `⛔ Video blocked by moderation at ${result.progress}%`;
+                                console.warn(`[I2VService] ⛔ VIDEO MODERATION BLOCK at ${result.progress}%`);
+                                aborted = true;
+                                try { stream.destroy && stream.destroy(); } catch (_) {}
+                                return;
+                            }
+                        }
+                    } catch (_) {
+                        // Ignore parse errors
                     }
-                } catch (_) {
-                    // Ignore parse errors
                 }
+
+                // Stall detection: if progress stuck for too long, abort
+                if (result.progress > 0 && result.progress < 100 && !result.videoUrl) {
+                    const stallDuration = now - lastProgressTime;
+                    if (stallDuration > STALL_TIMEOUT_MS) {
+                        result.error = `⏱️ Generation stalled at ${result.progress}% for ${Math.round(stallDuration / 1000)}s — likely blocked by moderation`;
+                        console.warn(`[I2VService] ⏱️ STALL TIMEOUT at ${result.progress}% (${Math.round(stallDuration / 1000)}s) — aborting`);
+                        aborted = true;
+                        try { stream.destroy && stream.destroy(); } catch (_) {}
+                        return;
+                    }
+                }
+            }
+        };
+
+        try {
+            await iterateWithTimeout();
+        } catch (err) {
+            if (!aborted) {
+                console.warn(`[I2VService] Stream error: ${err.message}`);
+                if (!result.error) result.error = `Stream error: ${err.message}`;
             }
         }
 
         // Process remaining buffer
-        if (buffer.trim()) {
+        if (buffer.trim() && !aborted) {
             try {
                 const j = JSON.parse(buffer);
                 const vr = j.result?.response?.streamingVideoGenerationResponse;
@@ -289,14 +349,27 @@ class I2VService {
             } catch (_) { }
         }
 
-        // Fallback: use videoId as download key
-        if (!result.videoUrl && result.videoId) {
-            result.videoUrl = result.videoId;
-            console.log(`[I2VService] Using videoId as download key: ${result.videoId}`);
+        // Fallback: construct proper download URL from userId + videoId
+        // BUT only if progress is high enough — if stream died at e.g. 37%, video was never rendered
+        if (!result.videoUrl && result.videoId && !aborted) {
+            if (result.progress >= 80) {
+                if (result.userId) {
+                    result.videoUrl = `users/${result.userId}/generated_videos/${result.videoId}/video.mp4`;
+                    console.log(`[I2VService] Constructed video URL from userId+videoId: ${result.videoUrl}`);
+                } else {
+                    result.videoUrl = result.videoId;
+                    console.log(`[I2VService] Using videoId as download key (no userId): ${result.videoId}`);
+                }
+            } else {
+                console.warn(`[I2VService] ⚠️ Stream ended at ${result.progress}% — video likely incomplete, skipping download`);
+                if (!result.error) {
+                    result.error = `⛔ Stream ended at ${result.progress}% — video generation was likely blocked by moderation`;
+                }
+            }
         }
 
         if (!result.videoUrl && !result.error) {
-            result.error = `Video generation stopped at ${result.progress}% - no video URL or ID returned`;
+            result.error = `Video generation stopped at ${result.progress}% — no video URL or ID returned (possible moderation block)`;
         }
 
         return result;
@@ -325,7 +398,7 @@ class I2VService {
         const fullUrl = url.startsWith('http') ? url : `${API_ENDPOINTS.ASSETS_BASE_URL}${url}`;
 
         const MAX_RETRIES = 5;
-        const RETRY_DELAY = 3000;
+        const RETRY_DELAY = 5000;
 
         for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
             try {
@@ -340,10 +413,11 @@ class I2VService {
                     return { data: Buffer.from(res.data), size: res.data.byteLength };
                 }
 
-                if (res.status === 404 || res.status === 403) {
+                if (res.status === 404 || res.status === 403 || res.status === 500) {
                     if (attempt < MAX_RETRIES - 1) {
-                        console.log(`[I2VService] Video not ready (${res.status}), retry ${attempt + 1}/${MAX_RETRIES}...`);
-                        await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
+                        const wait = RETRY_DELAY + attempt * 3000;
+                        console.log(`[I2VService] Video not ready (${res.status}), retry ${attempt + 1}/${MAX_RETRIES} in ${(wait/1000).toFixed(0)}s...`);
+                        await new Promise(resolve => setTimeout(resolve, wait));
                         continue;
                     }
                 }
@@ -380,7 +454,7 @@ class I2VService {
 
         const fullUrl = url.startsWith('http') ? url : `${API_ENDPOINTS.ASSETS_BASE_URL}${url}`;
         const MAX_RETRIES = 5;
-        const RETRY_DELAY = 3000;
+        const RETRY_DELAY = 5000;
         const tmpPath = `${filePath}.download`;
         FileService.ensureDir(path.dirname(filePath));
 
@@ -415,10 +489,11 @@ class I2VService {
                     fs.unlinkSync(tmpPath);
                 }
 
-                if (res.status === 404 || res.status === 403) {
+                if (res.status === 404 || res.status === 403 || res.status === 500) {
                     if (attempt < MAX_RETRIES - 1) {
-                        console.log(`[I2VService] Video not ready (${res.status}), retry ${attempt + 1}/${MAX_RETRIES}...`);
-                        await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
+                        const wait = RETRY_DELAY + attempt * 3000;
+                        console.log(`[I2VService] Video not ready (${res.status}), retry ${attempt + 1}/${MAX_RETRIES} in ${(wait/1000).toFixed(0)}s...`);
+                        await new Promise(resolve => setTimeout(resolve, wait));
                         continue;
                     }
                 }
@@ -530,7 +605,7 @@ class I2VService {
                         headers: this.buildHeaders(session.capturedHeaders, cookieStr, 'https://grok.com/imagine'),
                         responseType: 'stream',
                         validateStatus: () => true,
-                        timeout: 300000,
+                        timeout: 180000, // 3 min max (stall detection handles early abort)
                     }
                 );
 
@@ -572,6 +647,20 @@ class I2VService {
                 result.fileMetadataId = fileMetadataIds[0];
                 result.fileMetadataIds = fileMetadataIds;
 
+                // Fallback userId extraction from upload fileUri
+                if (!result.userId) {
+                    for (const u of uploads) {
+                        if (u.fileUri) {
+                            const m = u.fileUri.match(/users\/([^/]+)\//);
+                            if (m) {
+                                result.userId = m[1];
+                                console.log(`[I2VService] Extracted userId from fileUri: ${result.userId}`);
+                                break;
+                            }
+                        }
+                    }
+                }
+
                 return result;
             } catch (error) {
                 if (attempt < MAX_RETRIES && this._isRetryableError(error)) {
@@ -600,7 +689,7 @@ class I2VService {
     async generateBatch(items, session, config = I2V_CONFIG, onProgress = null, startIdx = 0) {
         const N = items.length;
         const requestedConcurrency = Number(config.batchSize || PROCESSING_CONFIG.CONCURRENCY.I2V || PROCESSING_CONFIG.BATCH_SIZE || 10);
-        const CONCURRENCY = Math.max(1, Math.min(requestedConcurrency, 5));
+        const CONCURRENCY = Math.max(1, Math.min(requestedConcurrency, 2));
         const outputFolder = config.outputFolder || PATHS.I2V_DIR;
         const label = `Acc${session.accIdx + 1}`;
 
@@ -612,11 +701,20 @@ class I2VService {
 
         async function worker() {
             while (nextIdx < N) {
+                if (self._cancelled) {
+                    console.log(`[I2VService] [${label}] ⛔ Cancelled, stopping worker`);
+                    break;
+                }
                 const myIdx = nextIdx++;
                 const item = items[myIdx];
                 const globalNum = startIdx + myIdx + 1; // 1-based global number
 
                 console.log(`[I2VService] [${label}] 🎬📸 #${myIdx + 1}/${N} (shot${String(globalNum).padStart(4, '0')}) processing: ${path.basename(item.imagePath)}`);
+
+                // Emit 0-progress "started" event immediately so the tracker UI
+                // shows the job as pending right away instead of staying blank
+                // for several seconds while upload / first server response runs.
+                if (onProgress) onProgress(item, 0, null, myIdx);
 
                 const result = await self.generateOne(item, session, config, (prog) => {
                     if (onProgress) onProgress(item, prog.progress, null, myIdx);

@@ -24,7 +24,7 @@ const VIDEO_CONFIG = {
     videoLength: 10,
     isVideoEdit: false,
     resolutionName: "720p",
-    resolutionOptions: ["480p", "720p", "1080p"],
+    resolutionOptions: ["480p", "720p"],
     aspectRatioOptions: ["16:9", "9:16", "1:1", "4:3"],
     lengthOptions: [5, 10, 15, 20],
 };
@@ -53,8 +53,8 @@ const PROCESSING_CONFIG = {
     BATCH_SIZE: 10,
     CONCURRENCY: {
         IMAGE: 30,
-        VIDEO: 30,
-        I2V: 10,
+        VIDEO: 2,
+        I2V: 2,
     },
     MAX_RETRIES: 3,
     RETRY_DELAY: 10000, // 10 seconds
