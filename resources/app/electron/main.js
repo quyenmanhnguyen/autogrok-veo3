@@ -948,7 +948,10 @@ ipcMain.handle('i2v:generate', async (_, params) => {
 
         const perAcc = Math.ceil(expandedItems.length / sessions.length);
         sendLog('info', `Generating ${expandedItems.length} I2V videos across ${sessions.length} account(s) (${perAcc} per acc)...`);
-        const perAccountConcurrency = Math.max(1, Math.min(Number(config?.videoCount || 1), 4));
+        // Mirror the cap applied inside I2VService.generateBatch (max 2 per
+        // account); reading config.batchSize keeps the log accurate even when
+        // the renderer asks for higher numbers.
+        const perAccountConcurrency = Math.max(1, Math.min(Number(config?.batchSize || 2), 2));
         sendLog('info', `I2V concurrency: ${sessions.length} account(s) x up to ${perAccountConcurrency}/account`);
 
         // Refresh cookies from live browser sessions before generating

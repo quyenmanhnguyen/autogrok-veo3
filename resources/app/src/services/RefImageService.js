@@ -171,11 +171,14 @@ class RefImageService {
             config.imageGenerationCount || config.count || 2,
             4
         );
-        const enableNsfw = config.enableNsfw === false ? false : true;
-        const enablePro = config.enablePro !== false ? true : false;
+        // NOTE: Body shape is verified by capturing the outbound POST that
+        // grok.com/imagine sends when editing a reference image. The web app
+        // does NOT send enableNsfw / enablePro / toolOverrides here, and uses
+        // imageEditModel = 'imagine' (not 'imagine-x-1'). The server has been
+        // observed to silently bypass the ref-edit pipeline when extra fields
+        // are present, so we mirror the captured payload exactly.
         return {
             temporary: true,
-            // imagine-image-edit handles ref-edit flow (speed, count, reference following)
             modelName: MODEL_CONFIG.REF_IMAGE_MODEL,
             message: prompt,
             enableImageGeneration: true,
@@ -185,17 +188,13 @@ class RefImageService {
             imageGenerationCount: imageCount,
             forceConcise: false,
             enableSideBySide: true,
-            enableNsfw,
-            enablePro,
             sendFinalMetadata: true,
             isReasoning: false,
             disableTextFollowUps: true,
             responseMetadata: {
                 modelConfigOverride: {
                     modelMap: {
-                        // imagine-x-1 = photorealistic renderer (same as Image tab)
-                        // 'imagine' = default/anime renderer
-                        imageEditModel: 'imagine-x-1',
+                        imageEditModel: 'imagine',
                         imageEditModelConfig: {
                             imageReferences: imageUrls,
                             parentPostId: parentPostId,
@@ -928,12 +927,17 @@ class RefImageService {
                 }
                 if (uploadResult.error) return { imageUrls: [], imageBase64: [], error: uploadResult.error, status: 0 };
 
-                // ── TIER 1: WebSocket (PRIMARY — inline blobs bypass CDN entirely) ──
-                // Like ImageService, the WS delivers raw base64 blobs in the stream frames.
-                // These never touch CDN moderation, so they're always full-res/unblurred.
-                if (session._page) {
+                // NOTE: grok.com/imagine sends ref-edit requests via REST chat
+                // (verified by capturing the outbound POST). The Imagine WS
+                // endpoint silently ignores the ref-image properties, so any
+                // images returned through WS are NOT actually conditioned on
+                // the reference — exactly the bug the user reported. We skip
+                // WS by default to avoid both the bad output and the ~30s
+                // timeout that occurs when the WS attempt fails.
+                // To experiment with WS again, set config.useRefWebSocket = true.
+                if (config.useRefWebSocket && session._page) {
                     try {
-                        console.log(`[RefImageService] 🔌 WS generation (PRIMARY, anti-blur)...`);
+                        console.log(`[RefImageService] 🔌 WS generation (experimental, opt-in)...`);
                         const wsResult = await this.generateViaWebSocket(
                             prompt, uploadResult.imageUrls, uploadResult.parentPostId, session, config
                         );
@@ -1021,6 +1025,10 @@ class RefImageService {
 
         async function worker() {
             while (nextIdx < N) {
+                if (self._cancelled) {
+                    console.log(`[RefImageService] [${label}] ⛔ Cancelled, stopping worker`);
+                    break;
+                }
                 const myIdx = nextIdx++;
                 const item = items[myIdx];
                 const globalNum = startIdx + myIdx + 1;

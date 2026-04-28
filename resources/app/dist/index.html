@@ -676,6 +676,62 @@ window.__trackerReset=function(){/* no-op: keep history, new batch auto-separate
 var ha=0,hi=setInterval(function(){if(hook()||++ha>60)clearInterval(hi)},1000);
 })();
 </script>
+
+<script>
+// ===== PROMPT TEXTAREA AUTO-NEWLINE PATCH =====
+// Fix: when user pastes (or types after focus) a new prompt at the end of
+// an existing prompt list that doesn't end with a newline, the new prompt
+// gets concatenated onto the last existing prompt because the textarea
+// uses '\n' as the per-prompt separator. This patch auto-inserts a
+// newline before pasted text so new prompts always start on their own
+// line. Only triggers when pasting at the very end of non-empty content
+// that doesn't already end with a newline — never modifies edits that
+// happen in the middle of the textarea.
+(function(){
+  var nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+  function applyValue(ta, v){
+    nativeSetter.call(ta, v);
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+  function fix(ta){
+    if (ta.__pmFix) return;
+    ta.__pmFix = true;
+    ta.addEventListener('paste', function(e){
+      var v = ta.value || '';
+      var s = ta.selectionStart, en = ta.selectionEnd;
+      // Only auto-prepend newline when caret is at end of non-empty content
+      // and selection is collapsed (i.e. cursor at end, no replacement).
+      if (s !== en) return;
+      if (s !== v.length) return;
+      if (!v) return;
+      if (v.endsWith('\n')) return;
+      var cd = e.clipboardData || window.clipboardData;
+      if (!cd) return;
+      var pasted = cd.getData('text');
+      if (!pasted) return;
+      e.preventDefault();
+      // Insert a separator newline so the pasted block starts on a new line.
+      // If the pasted text already starts with whitespace/newlines, normalise.
+      var sep = pasted.startsWith('\n') ? '' : '\n';
+      applyValue(ta, v + sep + pasted);
+      // Move caret to end of pasted content.
+      var newPos = (v + sep + pasted).length;
+      ta.setSelectionRange(newPos, newPos);
+    });
+  }
+  function scan(){
+    // Match all prompt textareas (image, i2v, ref-fill all use .prompt-textarea).
+    var tas = document.querySelectorAll('textarea.prompt-textarea');
+    for (var i = 0; i < tas.length; i++) fix(tas[i]);
+  }
+  if (document.body) scan();
+  document.addEventListener('DOMContentLoaded', scan);
+  // React rerenders may swap textarea instances, so observe the tree.
+  try {
+    new MutationObserver(scan).observe(document.documentElement, { childList: true, subtree: true });
+  } catch (_) {}
+})();
+</script>
 </body>
 
 </html>
