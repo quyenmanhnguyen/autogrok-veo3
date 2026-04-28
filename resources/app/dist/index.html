@@ -555,7 +555,7 @@ select option {
 .ag-clear-btn:hover{border-color:#ff5252;color:#ff5252}
 </style>
 <script>
-// ===== PROGRESS TRACKER v8 — stacked batches, per-job cancel =====
+// ===== PROGRESS TRACKER v9 — stacked batches, per-job cancel, cumulative per-type numbering =====
 (function(){
 var bc=0,cBid=null,cBtype=null,jobs=new Map(),panel=null,collapsed=false;
 var cancelledKeys=new Set();
@@ -614,7 +614,7 @@ else if(t!==cBtype){newB(t)}
 else if(gi===0&&!bb){var ex=jobs.get(cBid+':'+t+':0');if(ex&&(ex.st==='done'||ex.st==='error'))newB(t)}
 var k=cBid+':'+t+':'+gi;
 if(cancelledKeys.has(k))return;
-if(!jobs.has(k))jobs.set(k,{bid:cBid,type:t,gi:gi,pr:getPr(d),pct:0,st:'pending',err:null,t0:Date.now(),t1:null,key:k});
+if(!jobs.has(k))jobs.set(k,{bid:cBid,type:t,gi:gi,pr:getPr(d),pct:0,st:'pending',err:null,t0:Date.now(),t1:null,key:k,seq:Date.now()+Math.random()});
 var j=jobs.get(k);
 var p=typeof d.progress==='number'?d.progress:j.pct;
 j.pct=Math.max(j.pct,p);
@@ -632,6 +632,10 @@ var TI={image:'\u{1F5BC}',video:'\u{1F3AC}',i2v:'\u{1F4F8}',refimg:'\u{1F3A8}'};
 var SI={pending:'\u23F3',running:'\u{1F504}',done:'\u2705',error:'\u274C'};
 function render(){
 mkPanel();var body=document.getElementById('ag-tracker-body');if(!body)return;
+// Compute cumulative per-type number based on insertion order (seq).
+// This way #1, #2, #3... continue across batches of the same type.
+var _byType={};for(var _j of jobs.values()){if(!_byType[_j.type])_byType[_j.type]=[];_byType[_j.type].push(_j)}
+for(var _t in _byType){_byType[_t].sort(function(a,b){return a.seq-b.seq}).forEach(function(jj,ii){jj.absNum=ii+1})}
 var bm=new Map();for(var j of jobs.values()){if(!bm.has(j.bid))bm.set(j.bid,[]);bm.get(j.bid).push(j)}
 var dn=0,er=0,rn=0,wt=0,html='';
 var bids=Array.from(bm.keys()).reverse();
@@ -647,7 +651,7 @@ var el=j.st==='running'?ft(Date.now()-j.t0):(j.t1?ft(j.t1-j.t0):'');
 var canCancel=(j.st==='running'||j.st==='pending');
 var xBtn=canCancel?'<button class="ag-x-btn" data-jk="'+j.key+'" title="D\u1EEBng job n\u00E0y">\u00D7</button>':'<span style="width:18px"></span>';
 html+='<div class="ag-job-row '+j.st+'" title="'+(j.err||j.pr||'').replace(/"/g,'&quot;').substring(0,300)+'">'
-+'<span class="ag-idx">'+ti+'#'+(j.gi+1)+'</span>'
++'<span class="ag-idx">'+ti+'#'+(j.absNum||j.gi+1)+'</span>'
 +'<span class="ag-prompt">'+pr+'</span>'
 +'<span style="font-size:10px;color:'+(j.st==='running'?'#00e5ff':'#888')+';min-width:34px;text-align:right;font-weight:'+(j.st==='running'?'600':'400')+'">'+el+'</span>'
 +'<span class="ag-bar-wrap"><span class="ag-bar-fill" style="width:'+p+'%"></span></span>'

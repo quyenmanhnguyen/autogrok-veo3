@@ -711,6 +711,11 @@ class I2VService {
 
                 console.log(`[I2VService] [${label}] 🎬📸 #${myIdx + 1}/${N} (shot${String(globalNum).padStart(4, '0')}) processing: ${path.basename(item.imagePath)}`);
 
+                // Emit 0-progress "started" event immediately so the tracker UI
+                // shows the job as pending right away instead of staying blank
+                // for several seconds while upload / first server response runs.
+                if (onProgress) onProgress(item, 0, null, myIdx);
+
                 const result = await self.generateOne(item, session, config, (prog) => {
                     if (onProgress) onProgress(item, prog.progress, null, myIdx);
                 });

@@ -1027,6 +1027,11 @@ class RefImageService {
 
                 console.log(`[RefImageService] [${label}] 🖼️✨ #${myIdx + 1}/${N} (shot${String(globalNum).padStart(4, '0')}) refs=${item.refImagePaths.length} | ${item.prompt.substring(0, 50)}...`);
 
+                // Emit 0-progress "started" event immediately so the tracker UI
+                // shows the job as pending right away instead of staying blank
+                // for several seconds while upload + ref-edit pipeline run.
+                if (onProgress) onProgress(item.prompt, 0, null, myIdx);
+
                 const result = await self.generateOne(item, session, config, (prog) => {
                     if (onProgress) onProgress(item.prompt, prog.progress, null, myIdx);
                 });

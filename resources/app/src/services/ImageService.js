@@ -1324,6 +1324,12 @@ class ImageService {
 
                 console.log(`[ImageService] [${label}] 🖼️ #${myIdx + 1}/${N} (shot${String(globalNum).padStart(4, '0')}) starting: ${prompt.substring(0, 50)}...`);
 
+                // Emit 0-progress "started" event immediately so the tracker
+                // UI shows the job as pending right away instead of staying
+                // blank for several seconds while createPost / first server
+                // response runs.
+                if (onProgress) onProgress(prompt, 0, null, myIdx);
+
                 const result = await self.generateOne(prompt, session, config, (prog) => {
                     if (onProgress) onProgress(prompt, prog.progress, null, myIdx);
                 });
