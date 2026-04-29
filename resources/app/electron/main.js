@@ -628,6 +628,7 @@ ipcMain.handle('auth:clearSessions', async () => {
 ipcMain.handle('image:generate', async (_, params) => {
     try {
         const { prompts, config, startIdx: baseIdx = 0 } = params;
+        if (config && config.imageCount) config.imageGenerationCount = config.imageCount;
         const _batchId = 'img_' + Date.now();
         ImageService.resetCancel();
         const sessions = AuthService.getAllSessions();
@@ -719,7 +720,7 @@ ipcMain.handle('video:generate', async (_, params) => {
         }
 
         // Duplicate prompts based on videoCount (e.g., 2 = generate 2 videos per prompt)
-        const videoCount = Math.max(1, Math.min(Number(config?.videoCount || 1), 4));
+        const videoCount = Math.max(1, Math.min(Number(config?.videoCount || 1), 2));
         let expandedPrompts = prompts;
         if (videoCount > 1) {
             expandedPrompts = [];
@@ -934,7 +935,7 @@ ipcMain.handle('i2v:generate', async (_, params) => {
         }
 
         // Duplicate items based on videoCount (e.g., 2 = generate 2 videos per image)
-        const videoCount = Math.max(1, Math.min(Number(config?.videoCount || 1), 4));
+        const videoCount = Math.max(1, Math.min(Number(config?.videoCount || 1), 2));
         let expandedItems = items;
         if (videoCount > 1) {
             expandedItems = [];
@@ -999,6 +1000,7 @@ ipcMain.handle('i2v:generate', async (_, params) => {
 ipcMain.handle('refimg:generate', async (_, params) => {
     try {
         const { items, config, startIdx: baseIdx = 0 } = params;
+        if (config && config.imageCount) config.imageGenerationCount = config.imageCount;
         const _batchId = 'ref_' + Date.now();
         RefImageService.resetCancel();
         const sessions = AuthService.getAllSessions();
