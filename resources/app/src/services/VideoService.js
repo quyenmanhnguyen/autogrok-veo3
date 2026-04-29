@@ -101,12 +101,19 @@ class VideoService {
       resolutionName: config.resolutionName || config.resolution || VIDEO_CONFIG.resolutionName,
     };
 
-    console.log(`[VideoService] buildVideoBody config: aspectRatio=${mergedConfig.aspectRatio}, videoLength=${mergedConfig.videoLength}, resolution=${mergedConfig.resolutionName}`);
+    // `--mode=<mode>` controls how strict moderation is. "custom" matches legacy
+    // app behaviour; "spicy" is the bolder/less-filtered preset that grok.com
+    // web exposes. UI/config can override; generateOne() retries with
+    // moderationRetryMode when the first attempt is fully blocked.
+    const allowedModes = VIDEO_CONFIG.modeOptions || ['custom', 'fun', 'normal', 'spicy'];
+    const mode = allowedModes.includes(config.mode) ? config.mode : (VIDEO_CONFIG.mode || 'custom');
+
+    console.log(`[VideoService] buildVideoBody config: aspectRatio=${mergedConfig.aspectRatio}, videoLength=${mergedConfig.videoLength}, resolution=${mergedConfig.resolutionName}, mode=${mode}`);
 
     return {
       temporary: true,
       modelName: MODEL_CONFIG.VIDEO_MODEL,
-      message: prompt + ' --mode=custom',
+      message: `${prompt} --mode=${mode}`,
       toolOverrides: { videoGen: true },
       enableSideBySide: true,
       responseMetadata: {
@@ -139,9 +146,13 @@ class VideoService {
       progress: 0,
       error: null,
       errorDetail: null,
+      // Multi-candidate side-by-side support — Grok web returns 2 videos
+      // per request when `enableSideBySide` is true.
+      candidates: [],
+      allVideoUrls: [],
     };
     let moderationBlockCount = 0;
-    let allVideoUrls = [];
+    const candidatesByKey = new Map();
 
     const lines = text.split('\n').filter(l => l.trim());
 
@@ -171,7 +182,7 @@ class VideoService {
         if (mr?.isSoftBlock || mr?.isDisallowed) {
           moderationBlockCount++;
           console.warn(`[VideoService] ⚠️ MODERATION flag #${moderationBlockCount} — continuing (side-by-side)`);
-          if (!result.videoUrl && allVideoUrls.length === 0) {
+          if (!result.videoUrl && result.allVideoUrls.length === 0) {
             result.error = `⛔ Content blocked by moderation (softBlock=${mr.isSoftBlock}, disallowed=${mr.isDisallowed})`;
           }
         }
@@ -179,27 +190,49 @@ class VideoService {
         // Video progress
         const vr = j.result?.response?.streamingVideoGenerationResponse;
         if (vr) {
+          // Group chunks by candidate (videoId/assetId/videoIndex) so we can
+          // collect distinct URLs from side-by-side generation.
+          const candKey = vr.videoId || vr.assetId
+            || (vr.videoIndex != null ? `idx${vr.videoIndex}` : null)
+            || (vr.videoUrl ? `url:${vr.videoUrl}` : 'default');
+          let cand = candidatesByKey.get(candKey);
+          if (!cand) {
+            cand = { progress: 0 };
+            candidatesByKey.set(candKey, cand);
+          }
+          if (vr.videoId) cand.videoId = vr.videoId;
+          if (vr.assetId) cand.assetId = vr.assetId;
+          if (vr.videoIndex != null) cand.videoIndex = vr.videoIndex;
+          if (typeof vr.progress === 'number' && vr.progress > (cand.progress || 0)) {
+            cand.progress = vr.progress;
+          }
+
           result.progress = vr.progress || result.progress;
-          // Capture videoId/assetId whenever available
-          if (vr.videoId) result.videoId = vr.videoId;
+          // Capture videoId/assetId whenever available (primary slot)
+          if (vr.videoId) result.videoId = result.videoId || vr.videoId;
           if (vr.assetId) result.videoId = result.videoId || vr.assetId;
           // Capture videoUrl whenever available (not just at progress=100)
           if (vr.videoUrl) {
-            allVideoUrls.push(vr.videoUrl);
-            result.videoUrl = vr.videoUrl;
+            cand.videoUrl = vr.videoUrl;
+            if (!result.allVideoUrls.includes(vr.videoUrl)) {
+              result.allVideoUrls.push(vr.videoUrl);
+            }
+            if (!result.videoUrl) result.videoUrl = vr.videoUrl;
             // Clear moderation error since we got a successful video
             if (result.error && result.error.startsWith('⛔')) result.error = null;
-            console.log(`[VideoService] 🎉 Video ready! url=${result.videoUrl.substring(0, 50)} (${allVideoUrls.length} total candidates)`);
+            console.log(`[VideoService] 🎉 Video ready! url=${vr.videoUrl.substring(0, 50)} (${result.allVideoUrls.length} unique URL(s), ${candidatesByKey.size} candidate(s))`);
           }
           if (vr.error) {
             const msg = typeof vr.error === 'string' ? vr.error : vr.error.message || JSON.stringify(vr.error);
+            cand.error = cand.error || msg;
             if (!result.error) result.error = msg;
           }
           // Check for moderation flags in video response — DON'T abort!
           if (vr.isSoftBlock || vr.isDisallowed || vr.blocked) {
+            cand.moderated = true;
             moderationBlockCount++;
             console.warn(`[VideoService] ⚠️ Video moderation flag #${moderationBlockCount} at ${result.progress}% — continuing (side-by-side)`);
-            if (!result.videoUrl && allVideoUrls.length === 0) {
+            if (!result.videoUrl && result.allVideoUrls.length === 0) {
               result.error = `⛔ Video blocked by moderation at ${result.progress}%`;
             }
           }
@@ -226,6 +259,16 @@ class VideoService {
     if (!result.videoUrl && !result.error) {
       result.error = `Video generation stopped at ${result.progress}% — no video URL returned (possible moderation block)`;
     }
+
+    // Materialize candidates list (sorted by videoIndex when present)
+    result.candidates = Array.from(candidatesByKey.values())
+      .filter(c => c.videoUrl || c.videoId || c.assetId)
+      .sort((a, b) => {
+        const ai = a.videoIndex != null ? a.videoIndex : 99;
+        const bi = b.videoIndex != null ? b.videoIndex : 99;
+        return ai - bi;
+      });
+    result.moderationBlockCount = moderationBlockCount;
 
     return result;
   }
@@ -354,7 +397,64 @@ class VideoService {
    * @param {Function} onProgress - Progress callback
    * @returns {Promise<Object>} Result with video URL
    */
+  /**
+   * Detect whether a `_generateOneAttempt` result was blocked by moderation
+   * (no video URL produced and an error message that looks like a block).
+   */
+  _isModerationBlock(result) {
+    if (!result) return false;
+    if (result.videoUrl) return false;
+    if (result.candidates && result.candidates.some(c => c.videoUrl)) return false;
+    if (!result.error) return false;
+    const e = String(result.error).toLowerCase();
+    return e.includes('moderat')
+      || e.includes('softblock')
+      || e.includes('soft block')
+      || e.includes('disallowed')
+      || e.includes('blocked')
+      || e.includes('content blocked')
+      || e.startsWith('⛔')
+      || e.includes('stalled');
+  }
+
   async generateOne(prompt, session, config = VIDEO_CONFIG, onProgress = null) {
+    // Moderation-aware fallback: try requested mode first, then
+    // `moderationRetryMode` (default "spicy") if the first attempt is blocked.
+    const allowedModes = VIDEO_CONFIG.modeOptions || ['custom', 'fun', 'normal', 'spicy'];
+    const requestedMode = allowedModes.includes(config.mode) ? config.mode : (VIDEO_CONFIG.mode || 'custom');
+    const retryMode = config.moderationRetryMode !== undefined
+      ? config.moderationRetryMode
+      : VIDEO_CONFIG.moderationRetryMode;
+
+    const firstResult = await this._generateOneAttempt(prompt, session, { ...config, mode: requestedMode }, onProgress);
+
+    if (retryMode
+        && allowedModes.includes(retryMode)
+        && retryMode !== requestedMode
+        && this._isModerationBlock(firstResult)) {
+      console.warn(`[VideoService] ✨ First attempt blocked by moderation (mode=${requestedMode}). Retrying with mode=${retryMode}...`);
+      const retryResult = await this._generateOneAttempt(prompt, session, { ...config, mode: retryMode }, onProgress);
+      if (retryResult && (retryResult.videoUrl || (retryResult.candidates && retryResult.candidates.some(c => c.videoUrl)))) {
+        retryResult.modeUsed = retryMode;
+        retryResult.moderationFallback = true;
+        return retryResult;
+      }
+      const merged = { ...firstResult };
+      merged.modeUsed = requestedMode;
+      merged.moderationFallback = true;
+      merged.error = `⛔ Blocked in both modes ("${requestedMode}" and "${retryMode}"): ${firstResult.error || retryResult?.error || 'no video'}`;
+      return merged;
+    }
+
+    if (firstResult) firstResult.modeUsed = requestedMode;
+    return firstResult;
+  }
+
+  /**
+   * Single generation attempt (with retry for network errors).
+   * Internal — callers should use `generateOne` for moderation fallback.
+   */
+  async _generateOneAttempt(prompt, session, config = VIDEO_CONFIG, onProgress = null) {
     const MAX_RETRIES = PROCESSING_CONFIG.MAX_RETRIES;
     const BASE_DELAY = PROCESSING_CONFIG.RETRY_DELAY;
 
@@ -494,23 +594,46 @@ class VideoService {
           if (onProgress) onProgress(prompt, prog.progress, null, myIdx);
         });
 
-        // Download video
-        let savedFile = null;
-        if (result.videoUrl) {
-          console.log(`[VideoService] [${label}] 📥 #${myIdx + 1} downloading...`);
-          try {
-            const shotNum = String(globalNum).padStart(4, '0');
-            const titleSlug = (result.title || '').replace(/[^a-zA-Z0-9\u00C0-\u024F\u1E00-\u1EFF ]/g, '').trim().replace(/\s+/g, '_').substring(0, 60);
-            const filename = titleSlug ? `shot${shotNum}_${titleSlug}.mp4` : `shot${shotNum}.mp4`;
-            const filePath = path.join(outputFolder, filename);
-            const dl = await self.downloadVideoToFile(result.videoUrl, session, filePath);
-            if (dl) {
-              savedFile = dl.path;
-            }
-          } catch (error) {
-            console.error(`[VideoService] [${label}] Download error:`, error.message);
+        // Download video(s). With enableSideBySide=true Grok returns multiple
+        // candidates; collect every distinct URL and save each as `_v1`, `_v2`,
+        // etc. so the user has both videos like grok.com web shows.
+        const saveAll = config.saveAllSideBySide !== false && VIDEO_CONFIG.saveAllSideBySide !== false;
+        const downloadTargets = [];
+        if (saveAll && Array.isArray(result.candidates) && result.candidates.length > 0) {
+          for (const c of result.candidates) {
+            const url = c.videoUrl || c.videoId || c.assetId;
+            if (!url) continue;
+            if (downloadTargets.some(t => t.url === url)) continue;
+            downloadTargets.push({ url, videoId: c.videoId || c.assetId, videoIndex: c.videoIndex });
           }
         }
+        if (downloadTargets.length === 0 && result.videoUrl) {
+          downloadTargets.push({ url: result.videoUrl, videoId: result.videoId });
+        }
+
+        const savedFiles = [];
+        if (downloadTargets.length > 0) {
+          console.log(`[VideoService] [${label}] 📥 #${myIdx + 1} downloading ${downloadTargets.length} video(s)...`);
+          for (let i = 0; i < downloadTargets.length; i++) {
+            const target = downloadTargets[i];
+            try {
+              const shotNum = String(globalNum).padStart(4, '0');
+              const titleSlug = (result.title || '').replace(/[^a-zA-Z0-9\u00C0-\u024F\u1E00-\u1EFF ]/g, '').trim().replace(/\s+/g, '_').substring(0, 60);
+              const variantSuffix = downloadTargets.length > 1 ? `_v${i + 1}` : '';
+              const filename = titleSlug
+                ? `shot${shotNum}_${titleSlug}${variantSuffix}.mp4`
+                : `shot${shotNum}${variantSuffix}.mp4`;
+              const filePath = path.join(outputFolder, filename);
+              const dl = await self.downloadVideoToFile(target.url, session, filePath);
+              if (dl) {
+                savedFiles.push(dl.path);
+              }
+            } catch (error) {
+              console.error(`[VideoService] [${label}] Download error (variant ${i + 1}):`, error.message);
+            }
+          }
+        }
+        const savedFile = savedFiles[0] || null;
 
         const jobResult = {
           prompt,
@@ -518,8 +641,13 @@ class VideoService {
           title: result.title,
           videoId: result.videoId,
           savedFile,
+          savedFiles,
           outputPath: savedFile || null,
-          success: !!savedFile,
+          outputPaths: savedFiles.slice(),
+          candidateCount: downloadTargets.length,
+          modeUsed: result.modeUsed,
+          moderationFallback: !!result.moderationFallback,
+          success: savedFiles.length > 0,
           error: result.error,
         };
 

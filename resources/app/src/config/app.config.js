@@ -27,6 +27,17 @@ const VIDEO_CONFIG = {
     resolutionOptions: ["480p", "720p"],
     aspectRatioOptions: ["3:2", "1:1", "9:16", "16:9"],
     lengthOptions: [6, 10],
+    // Generation mode appended as `--mode=<mode>` to the prompt.
+    // Grok Imagine supports: custom (default app behaviour), fun, normal, spicy.
+    // "spicy" is the bolder/less-filtered preset; useful as a fallback when
+    // "custom" hits moderation. See moderationRetryMode below.
+    mode: "custom",
+    modeOptions: ["custom", "fun", "normal", "spicy"],
+    // Try one extra attempt with this mode if the first attempt is moderated.
+    // Set to null/empty to disable the moderation-fallback.
+    moderationRetryMode: "spicy",
+    // Save every side-by-side candidate to disk (Grok web shows 2 per request).
+    saveAllSideBySide: true,
 };
 
 // Image-to-Video Config
@@ -38,6 +49,10 @@ const I2V_CONFIG = {
     resolutionOptions: ["480p", "720p"],
     aspectRatioOptions: ["3:2", "1:1", "9:16", "16:9"],
     lengthOptions: [6, 10],
+    mode: "custom",
+    modeOptions: ["custom", "fun", "normal", "spicy"],
+    moderationRetryMode: "spicy",
+    saveAllSideBySide: true,
 };
 
 // Image Generation Config

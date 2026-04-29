@@ -169,12 +169,20 @@ class I2VService {
             resolutionName: validResolution,
         };
 
-        console.log(`[I2VService] buildI2VBody config: aspectRatio=${mergedConfig.aspectRatio}, videoLength=${mergedConfig.videoLength}, resolution=${mergedConfig.resolutionName}`);
+        // `--mode=<mode>` controls how strict moderation is. "custom" matches the
+        // legacy app behaviour; "spicy" is the bolder/less-filtered preset that
+        // grok.com web exposes for adult-oriented generation. UI/config can
+        // override this; generateOne() also retries with `moderationRetryMode`
+        // when the first attempt is fully blocked.
+        const allowedModes = I2V_CONFIG.modeOptions || ['custom', 'fun', 'normal', 'spicy'];
+        const mode = allowedModes.includes(config.mode) ? config.mode : (I2V_CONFIG.mode || 'custom');
+
+        console.log(`[I2VService] buildI2VBody config: aspectRatio=${mergedConfig.aspectRatio}, videoLength=${mergedConfig.videoLength}, resolution=${mergedConfig.resolutionName}, mode=${mode}`);
 
         const fileMetadataIds = Array.isArray(fileMetadataId) ? fileMetadataId.filter(Boolean) : [fileMetadataId].filter(Boolean);
         const imageUrls = Array.isArray(imageUrl) ? imageUrl.filter(Boolean) : [imageUrl].filter(Boolean);
         const imagePrefix = imageUrls.length ? `${imageUrls.join('  ')}  ` : '';
-        const message = `${imagePrefix}${prompt} --mode=custom`;
+        const message = `${imagePrefix}${prompt} --mode=${mode}`;
 
         return {
             temporary: true,
@@ -214,7 +222,14 @@ class I2VService {
             userId: null,
             progress: 0,
             error: null,
+            // Multi-candidate side-by-side support — Grok web returns 2 videos
+            // per request when `enableSideBySide` is true. We track each
+            // candidate by `videoId` (or `assetId`) so the generator can save
+            // every variant to disk instead of clobbering the URL on each chunk.
+            candidates: [],
+            allVideoUrls: [],
         };
+        const candidatesByKey = new Map(); // key (videoId/assetId) -> candidate state
 
         let buffer = '';
         let lastLog = 0;
@@ -222,7 +237,6 @@ class I2VService {
         const STALL_TIMEOUT_MS = 90000; // 90s stall → abort
         let aborted = false;
         let moderationBlockCount = 0; // Track how many side-by-side candidates were blocked
-        let allVideoUrls = [];        // Collect ALL video URLs from side-by-side candidates
 
         // Wrap stream iteration with stall detection
         const iterateWithTimeout = async () => {
@@ -263,7 +277,7 @@ class I2VService {
                             moderationBlockCount++;
                             console.warn(`[I2VService] ⚠️ MODERATION flag #${moderationBlockCount} at ${result.progress}% — continuing stream (side-by-side may have another candidate)`);
                             // Only set error if no video URL found yet — will be cleared if a URL arrives later
-                            if (!result.videoUrl && allVideoUrls.length === 0) {
+                            if (!result.videoUrl && result.allVideoUrls.length === 0) {
                                 result.error = `⛔ Content blocked by moderation (softBlock=${mr.isSoftBlock}, disallowed=${mr.isDisallowed})`;
                             }
                         }
@@ -271,7 +285,31 @@ class I2VService {
                         // Video progress
                         const vr = j.result?.response?.streamingVideoGenerationResponse;
                         if (vr) {
-                            if (vr.videoId) result.videoId = vr.videoId;
+                            // With enableSideBySide=true, the stream interleaves
+                            // chunks for every candidate. Group by videoId/assetId
+                            // so we can dedupe URLs and treat each candidate
+                            // independently (one may be moderated while the
+                            // other succeeds).
+                            const candKey = vr.videoId || vr.assetId
+                                || (vr.videoIndex != null ? `idx${vr.videoIndex}` : null)
+                                || (vr.videoUrl ? `url:${vr.videoUrl}` : 'default');
+                            let cand = candidatesByKey.get(candKey);
+                            if (!cand) {
+                                cand = { progress: 0 };
+                                candidatesByKey.set(candKey, cand);
+                            }
+                            if (vr.videoId) cand.videoId = vr.videoId;
+                            if (vr.assetId) cand.assetId = vr.assetId;
+                            if (vr.videoIndex != null) cand.videoIndex = vr.videoIndex;
+                            if (vr.imageReference) cand.imageReference = vr.imageReference;
+                            if (typeof vr.progress === 'number' && vr.progress > (cand.progress || 0)) {
+                                cand.progress = vr.progress;
+                            }
+
+                            // Keep top-level fields populated with the first/primary
+                            // candidate so existing callers (UI, batch downloader)
+                            // continue to work without modification.
+                            if (vr.videoId) result.videoId = result.videoId || vr.videoId;
                             if (vr.assetId) result.videoId = result.videoId || vr.assetId;
 
                             // Extract userId from imageReference
@@ -295,28 +333,33 @@ class I2VService {
                             // DEBUG: dump full response when progress is high
                             if (result.progress >= 80) {
                                 console.log(`[I2VService] DEBUG high-progress vr keys: ${Object.keys(vr).join(', ')}`);
-                                console.log(`[I2VService] DEBUG vr.videoUrl=${vr.videoUrl}, vr.videoId=${vr.videoId}, vr.assetId=${vr.assetId}, vr.progress=${vr.progress}`);
+                                console.log(`[I2VService] DEBUG vr.videoUrl=${vr.videoUrl}, vr.videoId=${vr.videoId}, vr.assetId=${vr.assetId}, vr.videoIndex=${vr.videoIndex}, vr.progress=${vr.progress}`);
                                 if (vr.imageReference) console.log(`[I2VService] DEBUG vr.imageReference=${vr.imageReference}`);
                             }
 
                             if (vr.videoUrl) {
-                                allVideoUrls.push(vr.videoUrl);
-                                result.videoUrl = vr.videoUrl;
+                                cand.videoUrl = vr.videoUrl;
+                                if (!result.allVideoUrls.includes(vr.videoUrl)) {
+                                    result.allVideoUrls.push(vr.videoUrl);
+                                }
+                                if (!result.videoUrl) result.videoUrl = vr.videoUrl;
                                 // Clear any moderation error since we got a successful video
                                 if (result.error && result.error.startsWith('⛔')) result.error = null;
-                                console.log(`[I2VService] 🎉 Video ready! url=${result.videoUrl.substring(0, 50)} (${allVideoUrls.length} total candidates)`);
+                                console.log(`[I2VService] 🎉 Video ready! url=${vr.videoUrl.substring(0, 50)} (${result.allVideoUrls.length} unique URL(s), ${candidatesByKey.size} candidate(s))`);
                             }
 
                             if (vr.error) {
                                 const msg = typeof vr.error === 'string' ? vr.error : vr.error.message || JSON.stringify(vr.error);
+                                cand.error = cand.error || msg;
                                 if (!result.error) result.error = msg;
                             }
 
                             // Check for moderation flags in video response — DON'T abort!
                             if (vr.isSoftBlock || vr.isDisallowed || vr.blocked) {
+                                cand.moderated = true;
                                 moderationBlockCount++;
                                 console.warn(`[I2VService] ⚠️ Video moderation flag #${moderationBlockCount} at ${result.progress}% — continuing (side-by-side)`);
-                                if (!result.videoUrl && allVideoUrls.length === 0) {
+                                if (!result.videoUrl && result.allVideoUrls.length === 0) {
                                     result.error = `⛔ Video blocked by moderation at ${result.progress}%`;
                                 }
                             }
@@ -358,16 +401,40 @@ class I2VService {
                     console.log(`[I2VService] DEBUG buffer vr keys: ${Object.keys(vr).join(', ')}, progress=${vr.progress}, videoUrl=${vr.videoUrl}, videoId=${vr.videoId}`);
                     result.progress = vr.progress || result.progress;
                     if (vr.videoUrl) {
-                        allVideoUrls.push(vr.videoUrl);
-                        result.videoUrl = vr.videoUrl;
-                        result.videoId = vr.videoId || vr.assetId || result.videoId;
+                        const candKey = vr.videoId || vr.assetId
+                            || (vr.videoIndex != null ? `idx${vr.videoIndex}` : null)
+                            || `url:${vr.videoUrl}`;
+                        let cand = candidatesByKey.get(candKey);
+                        if (!cand) {
+                            cand = { progress: vr.progress || 0 };
+                            candidatesByKey.set(candKey, cand);
+                        }
+                        cand.videoUrl = vr.videoUrl;
+                        if (vr.videoId) cand.videoId = vr.videoId;
+                        if (vr.assetId) cand.assetId = vr.assetId;
+                        if (vr.videoIndex != null) cand.videoIndex = vr.videoIndex;
+                        if (!result.allVideoUrls.includes(vr.videoUrl)) {
+                            result.allVideoUrls.push(vr.videoUrl);
+                        }
+                        if (!result.videoUrl) result.videoUrl = vr.videoUrl;
+                        result.videoId = result.videoId || vr.videoId || vr.assetId;
                         // Clear moderation error since we got a video
                         if (result.error && result.error.startsWith('⛔')) result.error = null;
                     }
                 }
             } catch (_) { }
         }
-        console.log(`[I2VService] DEBUG final state: progress=${result.progress}, videoUrl=${result.videoUrl}, videoId=${result.videoId}, aborted=${aborted}, moderationBlocks=${moderationBlockCount}, sideBySideUrls=${allVideoUrls.length}`);
+
+        // Materialize candidates list (sorted by videoIndex when present)
+        result.candidates = Array.from(candidatesByKey.values())
+            .filter(c => c.videoUrl || c.videoId || c.assetId)
+            .sort((a, b) => {
+                const ai = a.videoIndex != null ? a.videoIndex : 99;
+                const bi = b.videoIndex != null ? b.videoIndex : 99;
+                return ai - bi;
+            });
+        result.moderationBlockCount = moderationBlockCount;
+        console.log(`[I2VService] DEBUG final state: progress=${result.progress}, videoUrl=${result.videoUrl}, videoId=${result.videoId}, aborted=${aborted}, moderationBlocks=${moderationBlockCount}, candidates=${result.candidates.length}, allVideoUrls=${result.allVideoUrls.length}`);
 
         // Fallback: construct proper download URL from userId + videoId
         // ONLY if progress === 100 — anything less without a videoUrl is a moderation block
@@ -545,7 +612,35 @@ class I2VService {
     }
 
     /**
-     * Generate single I2V video (with retry for network errors)
+     * Detect whether a `generateOne` result was blocked by content moderation
+     * (no video URL produced and an error message that looks like a block).
+     * Used to decide whether to retry with `moderationRetryMode` (e.g. spicy).
+     */
+    _isModerationBlock(result) {
+        if (!result) return false;
+        if (result.videoUrl) return false;
+        if (result.candidates && result.candidates.some(c => c.videoUrl)) return false;
+        if (!result.error) return false;
+        const e = String(result.error).toLowerCase();
+        return e.includes('moderat')
+            || e.includes('softblock')
+            || e.includes('soft block')
+            || e.includes('disallowed')
+            || e.includes('blocked')
+            || e.includes('content blocked')
+            || e.startsWith('⛔')
+            || e.includes('stalled');
+    }
+
+    /**
+     * Generate single I2V video.
+     *
+     * Wraps `_generateOneAttempt` with a moderation-aware fallback: if the
+     * first attempt is fully blocked (no video produced) and the config
+     * specifies a `moderationRetryMode` distinct from the requested mode,
+     * we retry once with that mode. This mirrors how grok.com web silently
+     * upgrades to "spicy" for content the default preset rejects.
+     *
      * @param {Object} item - {imagePath, prompt}
      * @param {Object} session - Session data
      * @param {Object} config - I2V configuration
@@ -553,6 +648,43 @@ class I2VService {
      * @returns {Promise<Object>} Result with video URL
      */
     async generateOne(item, session, config = I2V_CONFIG, onProgress = null) {
+        const allowedModes = I2V_CONFIG.modeOptions || ['custom', 'fun', 'normal', 'spicy'];
+        const requestedMode = allowedModes.includes(config.mode) ? config.mode : (I2V_CONFIG.mode || 'custom');
+        const retryMode = config.moderationRetryMode !== undefined
+            ? config.moderationRetryMode
+            : I2V_CONFIG.moderationRetryMode;
+
+        const firstResult = await this._generateOneAttempt(item, session, { ...config, mode: requestedMode }, onProgress);
+
+        if (retryMode
+            && allowedModes.includes(retryMode)
+            && retryMode !== requestedMode
+            && this._isModerationBlock(firstResult)) {
+            console.warn(`[I2VService] ✨ First attempt blocked by moderation (mode=${requestedMode}). Retrying with mode=${retryMode}...`);
+            const retryResult = await this._generateOneAttempt(item, session, { ...config, mode: retryMode }, onProgress);
+            // If retry produced a video, prefer it; otherwise keep the first result
+            // but tag the error so callers can tell both attempts were blocked.
+            if (retryResult && (retryResult.videoUrl || (retryResult.candidates && retryResult.candidates.some(c => c.videoUrl)))) {
+                retryResult.modeUsed = retryMode;
+                retryResult.moderationFallback = true;
+                return retryResult;
+            }
+            const merged = { ...firstResult };
+            merged.modeUsed = requestedMode;
+            merged.moderationFallback = true;
+            merged.error = `⛔ Blocked in both modes ("${requestedMode}" and "${retryMode}"): ${firstResult.error || retryResult?.error || 'no video'}`;
+            return merged;
+        }
+
+        if (firstResult) firstResult.modeUsed = requestedMode;
+        return firstResult;
+    }
+
+    /**
+     * Single generation attempt (with retry for network errors).
+     * Internal — callers should use `generateOne` for moderation fallback.
+     */
+    async _generateOneAttempt(item, session, config = I2V_CONFIG, onProgress = null) {
         const { imagePath, prompt } = item;
         const imagePaths = (Array.isArray(item.refImagePaths) && item.refImagePaths.length > 0)
             ? item.refImagePaths.filter(Boolean)
@@ -740,23 +872,48 @@ class I2VService {
                     if (onProgress) onProgress(item, prog.progress, null, myIdx);
                 });
 
-                // Download video
-                let savedFile = null;
-                if (result.videoUrl) {
-                    console.log(`[I2VService] [${label}] 📥 #${myIdx + 1} downloading...`);
-                    try {
-                        const shotNum = String(globalNum).padStart(4, '0');
-                        const titleSlug = (result.title || '').replace(/[^a-zA-Z0-9\u00C0-\u024F\u1E00-\u1EFF ]/g, '').trim().replace(/\s+/g, '_').substring(0, 60);
-                        const filename = titleSlug ? `shot${shotNum}_${titleSlug}.mp4` : `shot${shotNum}.mp4`;
-                        const filePath = path.join(outputFolder, filename);
-                        const dl = await self.downloadVideoByUrlToFile(result.videoUrl, session, filePath);
-                        if (dl) {
-                            savedFile = dl.path;
-                        }
-                    } catch (error) {
-                        console.error(`[I2VService] [${label}] Download error:`, error.message);
+                // Download video(s). With enableSideBySide=true Grok returns
+                // multiple candidates per request; collect every distinct URL
+                // (or videoId) from the parsed stream and save each one.
+                const saveAll = config.saveAllSideBySide !== false && I2V_CONFIG.saveAllSideBySide !== false;
+                const downloadTargets = [];
+                if (saveAll && Array.isArray(result.candidates) && result.candidates.length > 0) {
+                    for (const c of result.candidates) {
+                        const url = c.videoUrl
+                            || (c.videoId && result.userId ? `users/${result.userId}/generated/${c.videoId}/generated_video.mp4` : null)
+                            || c.videoId || c.assetId;
+                        if (!url) continue;
+                        if (downloadTargets.some(t => t.url === url)) continue;
+                        downloadTargets.push({ url, videoId: c.videoId || c.assetId, videoIndex: c.videoIndex });
                     }
                 }
+                if (downloadTargets.length === 0 && result.videoUrl) {
+                    downloadTargets.push({ url: result.videoUrl, videoId: result.videoId });
+                }
+
+                const savedFiles = [];
+                if (downloadTargets.length > 0) {
+                    console.log(`[I2VService] [${label}] 📥 #${myIdx + 1} downloading ${downloadTargets.length} video(s)...`);
+                    for (let i = 0; i < downloadTargets.length; i++) {
+                        const target = downloadTargets[i];
+                        try {
+                            const shotNum = String(globalNum).padStart(4, '0');
+                            const titleSlug = (result.title || '').replace(/[^a-zA-Z0-9\u00C0-\u024F\u1E00-\u1EFF ]/g, '').trim().replace(/\s+/g, '_').substring(0, 60);
+                            const variantSuffix = downloadTargets.length > 1 ? `_v${i + 1}` : '';
+                            const filename = titleSlug
+                                ? `shot${shotNum}_${titleSlug}${variantSuffix}.mp4`
+                                : `shot${shotNum}${variantSuffix}.mp4`;
+                            const filePath = path.join(outputFolder, filename);
+                            const dl = await self.downloadVideoByUrlToFile(target.url, session, filePath);
+                            if (dl) {
+                                savedFiles.push(dl.path);
+                            }
+                        } catch (error) {
+                            console.error(`[I2VService] [${label}] Download error (variant ${i + 1}):`, error.message);
+                        }
+                    }
+                }
+                const savedFile = savedFiles[0] || null;
 
                 const jobResult = {
                     imagePath: item.imagePath,
@@ -765,8 +922,13 @@ class I2VService {
                     title: result.title,
                     videoId: result.videoId,
                     savedFile,
+                    savedFiles,                          // array of all variants saved
                     outputPath: savedFile || null,
-                    success: !!savedFile,
+                    outputPaths: savedFiles.slice(),     // alias for UIs that prefer this name
+                    candidateCount: downloadTargets.length,
+                    modeUsed: result.modeUsed,
+                    moderationFallback: !!result.moderationFallback,
+                    success: savedFiles.length > 0,
                     error: result.error,
                 };
 
