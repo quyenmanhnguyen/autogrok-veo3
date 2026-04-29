@@ -1,0 +1,5 @@
+Đặt 2 file vào đây:
+- ffmpeg.exe
+- ffprobe.exe
+
+Bạn có thể lấy FFmpeg bản Windows (static build) từ nguồn uy tín.

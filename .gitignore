@@ -1,0 +1,44 @@
+# Executables & binaries
+*.exe
+*.dll
+*.zip
+*.pak
+*.bin
+*.dat
+
+# Electron/Chromium runtime
+locales/
+vk_swiftshader*
+vulkan-1.dll
+icudtl.dat
+snapshot_blob.bin
+v8_context_snapshot.bin
+chrome_*.pak
+resources.pak
+ffmpeg.dll
+libEGL.dll
+libGLESv2.dll
+d3dcompiler_47.dll
+LICENSES.chromium.html
+LICENSE.electron.txt
+uninstallerIcon.ico
+
+# Node modules
+node_modules/
+
+# Backup files
+*.bak*
+*.backup
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Generated outputs
+images/
+
+# Session data (contains auth tokens & cookies - SENSITIVE)
+resources/app/sessions/
+
+# Cache files
+resources/app/dist/*.bak*

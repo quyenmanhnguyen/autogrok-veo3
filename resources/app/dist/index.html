@@ -1,0 +1,1231 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width,initial-scale=1" />
+        <title>AutoGrok ::: CRACK BY KCRACKER</title>
+        <script>window.global = window;
+                window.process = window.process || { env: {} };</script>
+        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+        <link rel="stylesheet" href="ui-overhaul.css">
+        <script defer="defer" src="renderer.js"></script>
+<style>
+:root {
+  --bg-primary: #0a0a1a;
+  --bg-secondary: #111127;
+  --bg-tertiary: #161637;
+  --bg-card: #1a1a3a;
+  --accent: #00e5ff;
+  --accent2: #7c4dff;
+  --accent-glow: rgba(0,229,255,0.15);
+  --text-primary: #e8eaf6;
+  --text-secondary: #9fa8da;
+  --border: rgba(255,255,255,0.08);
+  --success: #00e676;
+  --error: #ff5252;
+  --warning: #ffd740;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg-primary) !important;
+  color: var(--text-primary);
+  font-family: 'Segoe UI', -apple-system, sans-serif !important;
+  overflow: hidden;
+}
+
+#root { height: 100vh; }
+
+/* ===== VIDEO/IMAGE PREVIEW MODAL FIX ===== */
+.video-preview-modal,
+.video-preview-overlay {
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  background: rgba(0,0,0,0.85) !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  z-index: 99999 !important;
+  backdrop-filter: blur(8px) !important;
+}
+
+.video-preview-content {
+  max-width: 90vw !important;
+  max-height: 85vh !important;
+  background: var(--bg-secondary) !important;
+  border-radius: 16px !important;
+  padding: 20px !important;
+  border: 1px solid rgba(0,229,255,0.2) !important;
+  box-shadow: 0 24px 64px rgba(0,0,0,0.6), 0 0 40px rgba(0,229,255,0.1) !important;
+  position: relative !important;
+}
+
+.video-preview-content img,
+.video-preview-content video {
+  max-width: 80vw !important;
+  max-height: 70vh !important;
+  border-radius: 8px !important;
+  display: block !important;
+}
+
+.video-preview-content .close-button,
+.video-preview-content button {
+  position: absolute !important;
+  top: 8px !important;
+  right: 8px !important;
+  background: rgba(255,82,82,0.8) !important;
+  border: none !important;
+  color: #fff !important;
+  width: 32px !important;
+  height: 32px !important;
+  border-radius: 50% !important;
+  cursor: pointer !important;
+  font-size: 16px !important;
+  z-index: 10 !important;
+}
+
+/* ===== APP CONTAINER ===== */
+.app-container {
+  background: var(--bg-primary) !important;
+  color: var(--text-primary) !important;
+}
+
+/* ===== TOP HEADER / NAVBAR ===== */
+.header, .navbar, .top-bar, [class*="header"], [class*="navbar"] {
+  background: linear-gradient(135deg, var(--bg-secondary) 0%, var(--bg-tertiary) 100%) !important;
+  border-bottom: 1px solid var(--border) !important;
+  box-shadow: 0 2px 20px rgba(0,0,0,0.3) !important;
+}
+
+/* ===== TABS ===== */
+.tab-button, [class*="tab-btn"], [class*="tab-item"], [class*="TabButton"] {
+  background: transparent !important;
+  color: var(--text-secondary) !important;
+  border: 1px solid transparent !important;
+  border-radius: 10px !important;
+  padding: 8px 20px !important;
+  font-weight: 500 !important;
+  transition: all 0.3s ease !important;
+  cursor: pointer !important;
+}
+
+.tab-button:hover, [class*="tab-btn"]:hover {
+  color: var(--accent) !important;
+  border-color: rgba(0,229,255,0.2) !important;
+  background: rgba(0,229,255,0.05) !important;
+}
+
+.tab-button.active, [class*="tab-btn"].active,
+.tab-button[class*="active"], [class*="tab-btn"][class*="active"] {
+  background: linear-gradient(135deg, rgba(0,229,255,0.15), rgba(124,77,255,0.15)) !important;
+  color: var(--accent) !important;
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 20px rgba(0,229,255,0.1) !important;
+}
+
+/* ===== PANELS ===== */
+.panel, .left-panel, .right-panel, .input-panel, .output-panel,
+[class*="panel"], [class*="Panel"] {
+  background: var(--bg-secondary) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 12px !important;
+}
+
+.panel-title, [class*="panel-title"] {
+  color: var(--accent) !important;
+  font-weight: 600 !important;
+  font-size: 14px !important;
+}
+
+/* ===== INPUT FIELDS ===== */
+input[type="text"], input[type="password"], input[type="number"],
+textarea, select, [class*="input"], [class*="textarea"] {
+  background: var(--bg-primary) !important;
+  color: var(--text-primary) !important;
+  border: 1px solid rgba(255,255,255,0.1) !important;
+  border-radius: 10px !important;
+  padding: 10px 14px !important;
+  font-size: 13px !important;
+  transition: border-color 0.3s, box-shadow 0.3s !important;
+  outline: none !important;
+}
+
+input:focus, textarea:focus, select:focus {
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 12px rgba(0,229,255,0.15) !important;
+}
+
+/* ===== BUTTONS ===== */
+button, .btn, [class*="btn-"] {
+  border-radius: 10px !important;
+  font-weight: 500 !important;
+  transition: all 0.3s ease !important;
+  cursor: pointer !important;
+}
+
+.btn-primary, [class*="start"], [class*="Start"] {
+  background: linear-gradient(135deg, #00e5ff, #7c4dff) !important;
+  color: #fff !important;
+  border: none !important;
+  box-shadow: 0 4px 20px rgba(0,229,255,0.25) !important;
+}
+
+.btn-primary:hover, [class*="start"]:hover {
+  box-shadow: 0 6px 28px rgba(0,229,255,0.4) !important;
+  transform: translateY(-1px) !important;
+}
+
+.btn-danger, [class*="stop"], [class*="Stop"] {
+  background: linear-gradient(135deg, #ff5252, #ff1744) !important;
+  color: #fff !important;
+  border: none !important;
+}
+
+.btn-secondary, [class*="clear"], [class*="Clear"] {
+  background: rgba(255,255,255,0.06) !important;
+  color: var(--text-secondary) !important;
+  border: 1px solid var(--border) !important;
+}
+
+/* ===== TABLE ===== */
+table, .job-table, [class*="table"] {
+  border-collapse: separate !important;
+  border-spacing: 0 4px !important;
+}
+
+thead th, .table-header th {
+  background: var(--bg-tertiary) !important;
+  color: var(--text-secondary) !important;
+  font-weight: 600 !important;
+  font-size: 12px !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.5px !important;
+  padding: 10px 12px !important;
+  border: none !important;
+}
+
+tbody tr, .table-row {
+  background: var(--bg-card) !important;
+  transition: background 0.2s !important;
+}
+
+tbody tr:hover, .table-row:hover {
+  background: rgba(0,229,255,0.05) !important;
+}
+
+tbody td {
+  padding: 10px 12px !important;
+  border: none !important;
+  color: var(--text-primary) !important;
+  font-size: 13px !important;
+}
+
+/* ===== PROGRESS BAR ===== */
+.progress-bar, [class*="progress"] {
+  background: rgba(255,255,255,0.06) !important;
+  border-radius: 8px !important;
+  overflow: hidden !important;
+}
+
+.progress-bar-fill, [class*="progress-fill"], [class*="progress"] > div {
+  background: linear-gradient(90deg, #00e5ff, #7c4dff) !important;
+  border-radius: 8px !important;
+  transition: width 0.4s ease !important;
+}
+
+/* ===== STATUS BADGES ===== */
+.status-done, [class*="done"], [class*="DONE"] {
+  color: var(--success) !important;
+  font-weight: 600 !important;
+}
+
+.status-error, [class*="error"], [class*="ERROR"] {
+  color: var(--error) !important;
+}
+
+.status-running, [class*="running"], [class*="RUNNING"] {
+  color: var(--warning) !important;
+}
+
+/* ===== LOG PANEL ===== */
+.log-panel, .logs, [class*="log-panel"], [class*="log-container"] {
+  background: var(--bg-primary) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 12px !important;
+  font-family: 'Cascadia Code', 'Fira Code', monospace !important;
+  font-size: 12px !important;
+}
+
+.log-entry, [class*="log-entry"], [class*="log-item"] {
+  padding: 4px 8px !important;
+  border-bottom: 1px solid rgba(255,255,255,0.03) !important;
+}
+
+/* ===== SIDEBAR / CONFIG ===== */
+.config-panel, .sidebar, [class*="config"], [class*="sidebar"] {
+  background: var(--bg-secondary) !important;
+}
+
+label {
+  color: var(--text-secondary) !important;
+  font-size: 12px !important;
+  font-weight: 500 !important;
+}
+
+/* ===== SCROLLBAR ===== */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: rgba(0,229,255,0.2);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover { background: rgba(0,229,255,0.4); }
+
+/* ===== SLIDER ===== */
+input[type="range"] {
+  -webkit-appearance: none !important;
+  background: rgba(255,255,255,0.06) !important;
+  height: 6px !important;
+  border-radius: 3px !important;
+  outline: none !important;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none !important;
+  width: 16px !important;
+  height: 16px !important;
+  border-radius: 50% !important;
+  background: var(--accent) !important;
+  cursor: pointer !important;
+  box-shadow: 0 0 8px rgba(0,229,255,0.4) !important;
+}
+
+/* ===== ICON BUTTONS ===== */
+.review-btn, [title="Xem kết quả"] {
+  cursor: pointer !important;
+  font-size: 18px !important;
+  transition: transform 0.2s !important;
+}
+
+.review-btn:hover, [title="Xem kết quả"]:hover {
+  transform: scale(1.2) !important;
+}
+
+/* ===== FILE BROWSER BUTTON ===== */
+.file-select-btn, [class*="folder-btn"] {
+  background: linear-gradient(135deg, #00e5ff, #7c4dff) !important;
+  color: #fff !important;
+  border: none !important;
+  border-radius: 10px !important;
+}
+
+/* ===== USER BADGE ===== */
+.user-badge, [class*="user-info"], [class*="UserBadge"] {
+  background: rgba(0,229,255,0.1) !important;
+  border: 1px solid rgba(0,229,255,0.2) !important;
+  border-radius: 20px !important;
+  color: var(--accent) !important;
+}
+
+/* ===== ANIMATIONS ===== */
+@keyframes glow {
+  0%, 100% { box-shadow: 0 0 5px rgba(0,229,255,0.2); }
+  50% { box-shadow: 0 0 20px rgba(0,229,255,0.4); }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.app-container > div {
+  animation: fadeIn 0.3s ease-out !important;
+}
+
+/* ===== ACCOUNT CARDS ===== */
+.account-card, [class*="account-item"] {
+  background: var(--bg-card) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 12px !important;
+  transition: border-color 0.3s !important;
+}
+
+.account-card:hover, [class*="account-item"]:hover {
+  border-color: rgba(0,229,255,0.3) !important;
+}
+
+/* ===== BOTTOM BAR ===== */
+.bottom-bar, .action-bar, [class*="bottom-bar"], [class*="action-bar"] {
+  background: var(--bg-secondary) !important;
+  border-top: 1px solid var(--border) !important;
+}
+
+/* ===== TOOLTIP & POPOVER ===== */
+[class*="tooltip"], [class*="popover"] {
+  background: var(--bg-card) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 8px !important;
+  color: var(--text-primary) !important;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.4) !important;
+}
+
+/* ===== CHECKBOX ===== */
+input[type="checkbox"] {
+  accent-color: var(--accent) !important;
+}
+
+/* ===== PAGINATION ===== */
+.pagination, [class*="pagination"] {
+  color: var(--text-secondary) !important;
+}
+
+.pagination button {
+  background: rgba(255,255,255,0.05) !important;
+  border: 1px solid var(--border) !important;
+  color: var(--text-secondary) !important;
+}
+
+select option {
+  background: var(--bg-primary) !important;
+  color: var(--text-primary) !important;
+}
+</style></head>
+
+<body>
+        <div id="root"></div>
+
+<script>
+// ===== TAB STATE ISOLATION v1 — Prevent cross-tab prompt contamination =====
+// BUG: React InputPanel shares a single prompt state `h` across all tabs.
+// When user switches from "video" to "i2v", the textarea value carries over
+// and overwrites the other tab's prompts. This script intercepts tab clicks
+// to save/restore prompt textarea values per mode.
+(function() {
+    var _tabStore = {};       // { mode: { prompt: string, file: string, images: [...] } }
+    var _lastTab = null;
+    var _switching = false;
+    var nativeSetter = null;
+    try {
+        nativeSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
+    } catch(_) {}
+
+    function setTextarea(ta, val) {
+        if (!nativeSetter) return;
+        nativeSetter.call(ta, val);
+        ta.dispatchEvent(new Event('input', { bubbles: true }));
+        ta.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+
+    function getActiveTab() {
+        var tabs = document.querySelectorAll('.tab-button, [class*="tab-btn"]');
+        for (var i = 0; i < tabs.length; i++) {
+            var t = tabs[i];
+            if (!t.classList.contains('active') && t.className.indexOf('active') < 0) continue;
+            var txt = (t.textContent || '').toLowerCase();
+            if (txt.indexOf('image to video') >= 0 || txt.indexOf('i2v') >= 0) return 'i2v';
+            if (txt.indexOf('text to video') >= 0) return 'video';
+            if (txt.indexOf('aff') >= 0) return 'affref';
+            if (txt.indexOf('video') >= 0 && txt.indexOf('ng nh') >= 0) return 'uniformv';
+            if (txt.indexOf('ref') >= 0) return 'refimg';
+            if (txt.indexOf('nh') >= 0 || txt.indexOf('image') >= 0) return 'image';
+        }
+        return 'unknown';
+    }
+
+    function getAllPromptTextareas() {
+        return document.querySelectorAll('textarea.prompt-textarea, textarea.ref-fill-bulk');
+    }
+
+    function saveCurrentTab() {
+        var tab = _lastTab || getActiveTab();
+        if (!tab || tab === 'unknown') return;
+        var tas = getAllPromptTextareas();
+        var saved = { prompt: '', allPrompts: [] };
+        tas.forEach(function(ta) {
+            if (ta.value) saved.prompt = ta.value;
+            saved.allPrompts.push(ta.value || '');
+        });
+        _tabStore[tab] = saved;
+    }
+
+    function restoreTab(tab) {
+        if (!tab || tab === 'unknown') return;
+        var saved = _tabStore[tab];
+        if (!saved) return; // First time visiting this tab, no saved state
+        // Wait for React to render the new tab's UI
+        var attempts = 0;
+        var restoreInterval = setInterval(function() {
+            var tas = getAllPromptTextareas();
+            if (tas.length > 0 || attempts > 20) {
+                clearInterval(restoreInterval);
+                if (tas.length > 0 && saved.prompt) {
+                    // Only restore if the textarea is empty or has stale content from another tab
+                    tas.forEach(function(ta, idx) {
+                        var savedVal = saved.allPrompts[idx] !== undefined ? saved.allPrompts[idx] : saved.prompt;
+                        if (savedVal && ta.value !== savedVal) {
+                            setTextarea(ta, savedVal);
+                        }
+                    });
+                }
+            }
+            attempts++;
+        }, 100);
+    }
+
+    // Intercept tab button clicks
+    function hookTabButtons() {
+        var tabs = document.querySelectorAll('.tab-button, [class*="tab-btn"]');
+        tabs.forEach(function(tab) {
+            if (tab.__tabIsolationHooked) return;
+            tab.__tabIsolationHooked = true;
+            tab.addEventListener('click', function() {
+                if (_switching) return;
+                _switching = true;
+                // Save current tab state BEFORE React processes the click
+                saveCurrentTab();
+                var newTab = getActiveTab();
+                // After React processes (next tick), detect the new tab and restore
+                setTimeout(function() {
+                    var actualNew = getActiveTab();
+                    if (actualNew !== _lastTab && actualNew !== 'unknown') {
+                        restoreTab(actualNew);
+                    }
+                    _lastTab = actualNew;
+                    _switching = false;
+                }, 300);
+            }, true); // Use capture phase to run before React
+        });
+    }
+
+    // Auto-save on textarea changes (debounced)
+    var _saveDebounce = null;
+    function autoSaveOnChange() {
+        var tas = getAllPromptTextareas();
+        tas.forEach(function(ta) {
+            if (ta.__tabAutoSave) return;
+            ta.__tabAutoSave = true;
+            ta.addEventListener('input', function() {
+                if (_switching) return;
+                clearTimeout(_saveDebounce);
+                _saveDebounce = setTimeout(function() {
+                    var tab = getActiveTab();
+                    if (tab && tab !== 'unknown') {
+                        var saved = { prompt: '', allPrompts: [] };
+                        getAllPromptTextareas().forEach(function(t) {
+                            if (t.value) saved.prompt = t.value;
+                            saved.allPrompts.push(t.value || '');
+                        });
+                        _tabStore[tab] = saved;
+                        _lastTab = tab;
+                    }
+                }, 500);
+            });
+        });
+    }
+
+    // Initialize
+    var initAttempts = 0;
+    var initInterval = setInterval(function() {
+        hookTabButtons();
+        autoSaveOnChange();
+        if (!_lastTab) _lastTab = getActiveTab();
+        initAttempts++;
+        if (initAttempts > 30) {
+            clearInterval(initInterval);
+            // Keep hooking new tab buttons (React may re-render header)
+            setInterval(function() { hookTabButtons(); autoSaveOnChange(); }, 2000);
+        }
+    }, 500);
+
+    // Expose for debugging
+    window.__tabStore = _tabStore;
+    window.__saveCurrentTab = saveCurrentTab;
+    window.__restoreTab = restoreTab;
+})();
+</script>
+
+<script>
+// ===== UI Config Injection v5 — Override React dropdowns, no duplicates =====
+// renderer.js now has correct Grok web options. This script only:
+// 1) Syncs dropdown values to window globals for the generate hooks
+// 2) Injects image/video count rows (React doesn't have these)
+// 3) Shows/hides controls per tab
+(function() {
+    window.__imageCount = 4;
+    window.__videoCount = 1;
+    window.__videoAspect = '16:9';
+    window.__videoLength = 10;
+    window.__videoResolution = '720p';
+    var selectStyle = 'background:var(--bg-primary);color:var(--text-primary);border:1px solid rgba(255,255,255,0.1);border-radius:10px;padding:8px 12px;font-size:13px;cursor:pointer;flex:1;outline:none;transition:border-color 0.3s,box-shadow 0.3s;';
+    var labelStyle = 'color:var(--text-secondary);font-size:12px;font-weight:500;white-space:nowrap;min-width:100px;';
+    var rowStyle = 'margin-top:12px;display:flex;align-items:center;gap:10px;';
+    function addFocus(sel) {
+        sel.addEventListener('focus', function() { sel.style.borderColor='var(--accent)'; sel.style.boxShadow='0 0 12px rgba(0,229,255,0.15)'; });
+        sel.addEventListener('blur', function() { sel.style.borderColor='rgba(255,255,255,0.1)'; sel.style.boxShadow='none'; });
+    }
+    function makeRow(id, labelText, options, defaultVal, onChange) {
+        if (document.getElementById(id)) return null;
+        var container = document.createElement('div');
+        container.id = id;
+        container.style.cssText = rowStyle;
+        var lbl = document.createElement('label');
+        lbl.textContent = labelText;
+        lbl.style.cssText = labelStyle;
+        var sel = document.createElement('select');
+        sel.id = id + '-select';
+        sel.style.cssText = selectStyle;
+        options.forEach(function(o) {
+            var opt = document.createElement('option');
+            opt.value = o.value;
+            opt.textContent = o.label;
+            if (o.value == defaultVal) opt.selected = true;
+            sel.appendChild(opt);
+        });
+        sel.addEventListener('change', function() { onChange(sel.value); });
+        addFocus(sel);
+        container.appendChild(lbl);
+        container.appendChild(sel);
+        return container;
+    }
+    function getActiveTab() {
+        var tabs = document.querySelectorAll('[class*="tab-btn"], [class*="TabButton"], .tab-button, button');
+        for (var i = 0; i < tabs.length; i++) {
+            var t = tabs[i];
+            var isActive = t.classList.contains('active') || t.className.indexOf('active') >= 0 || t.getAttribute('aria-selected') === 'true';
+            if (!isActive) continue;
+            var txt = (t.textContent || '').toLowerCase();
+            if (txt.indexOf('i2v') >= 0 || txt.indexOf('image to video') >= 0 || txt.indexOf('nh sang video') >= 0) return 'i2v';
+            if (txt.indexOf('video') >= 0 || txt.indexOf('veo') >= 0) return 'video';
+            if (txt.indexOf('ref') >= 0) return 'refimg';
+            if (txt.indexOf('nh') >= 0 || txt.indexOf('image') >= 0 || txt.indexOf('img') >= 0) return 'image';
+        }
+        return 'unknown';
+    }
+
+    // --- Sync React-rendered selects to window globals ---
+    function syncReactDropdowns() {
+        var allLabels = document.querySelectorAll('label');
+        for (var i = 0; i < allLabels.length; i++) {
+            var lbl = allLabels[i];
+            var txt = (lbl.textContent || '').trim();
+            var parent = lbl.closest('div') || lbl.parentElement;
+            if (!parent) continue;
+            var sel = parent.querySelector('select');
+            if (!sel) continue;
+
+            if (txt === 'Aspect Ratio:' && !sel.__agSync) {
+                sel.__agSync = true;
+                // Read initial value and sync
+                window.__videoAspect = sel.value || '16:9';
+                sel.addEventListener('change', function() { window.__videoAspect = this.value; });
+            }
+            if (txt === 'Video Length:' && !sel.__agSync) {
+                sel.__agSync = true;
+                window.__videoLength = parseInt(sel.value) || 10;
+                sel.addEventListener('change', function() { window.__videoLength = parseInt(this.value) || 10; });
+            }
+            if (txt === 'Resolution:' && !sel.__agSync) {
+                sel.__agSync = true;
+                window.__videoResolution = sel.value || '720p';
+                sel.addEventListener('change', function() { window.__videoResolution = this.value; });
+            }
+        }
+    }
+
+    function injectDropdowns() {
+        var allLabels = document.querySelectorAll('label');
+        var aspectLabel = null;
+        for (var i = 0; i < allLabels.length; i++) {
+            if (allLabels[i].textContent && allLabels[i].textContent.includes('Aspect Ratio')) { aspectLabel = allLabels[i]; break; }
+        }
+        if (!aspectLabel) return;
+        var aspectParent = aspectLabel.closest('div') || aspectLabel.parentElement;
+        if (!aspectParent || !aspectParent.parentElement) return;
+        var anchor = aspectParent;
+
+        // Image Count (only injected, not in React)
+        if (!document.getElementById('image-count-container')) {
+            var imgRow = makeRow('image-count-container', 'S\u1ed1 l\u01b0\u1ee3ng \u1ea3nh:', [{value:1,label:'1'},{value:2,label:'2'},{value:4,label:'4 (m\u1eb7c \u0111\u1ecbnh)'}], 4, function(v) { window.__imageCount = parseInt(v, 10); });
+            if (imgRow) { anchor.parentElement.insertBefore(imgRow, anchor.nextSibling); anchor = imgRow; }
+        } else { anchor = document.getElementById('image-count-container'); }
+
+        // Video Count removed — I2VService generates 1 per item, videoCount unused
+    }
+    function updateVisibility() {
+        var tab = getActiveTab();
+        var imgC = document.getElementById('image-count-container');
+        var isImg = (tab === 'image' || tab === 'refimg');
+        if (imgC) imgC.style.display = isImg ? 'flex' : 'none';
+    }
+    function hookAllGenerates() {
+        if (!window.electronAPI) return false;
+        if (window.__allGeneratesHooked) return true;
+        var api = window.electronAPI;
+        if (api.image && api.image.generate && !api.image._origGenerate) {
+            api.image._origGenerate = api.image.generate;
+            api.image.generate = function(params) {
+                if (params && params.config) params.config.imageGenerationCount = window.__imageCount || 4;
+                else if (params) params.config = { imageGenerationCount: window.__imageCount || 4 };
+                return api.image._origGenerate(params);
+            };
+        }
+        if (api.video && api.video.generate && !api.video._origGenerate) {
+            api.video._origGenerate = api.video.generate;
+            api.video.generate = function(params) {
+                if (!params) params = {};
+                if (!params.config) params.config = {};
+                params.config.videoCount = window.__videoCount || 1;
+                params.config.aspectRatio = window.__videoAspect || '16:9';
+                params.config.videoLength = window.__videoLength || 10;
+                params.config.resolutionName = window.__videoResolution || '720p';
+                return api.video._origGenerate(params);
+            };
+        }
+        if (api.i2v && api.i2v.generate && !api.i2v._origGenerate) {
+            api.i2v._origGenerate = api.i2v.generate;
+            api.i2v.generate = function(params) {
+                if (!params) params = {};
+                if (!params.config) params.config = {};
+                params.config.videoCount = window.__videoCount || 1;
+                params.config.aspectRatio = window.__videoAspect || '9:16';
+                params.config.videoLength = window.__videoLength || 6;
+                params.config.resolutionName = window.__videoResolution || '720p';
+                return api.i2v._origGenerate(params);
+            };
+        }
+        window.__allGeneratesHooked = true;
+        return true;
+    }
+    var attempts = 0;
+    var interval = setInterval(function() {
+        syncReactDropdowns();
+        injectDropdowns();
+        hookAllGenerates();
+        updateVisibility();
+        attempts++;
+        if ((document.getElementById('image-count-container') && window.__allGeneratesHooked) || attempts > 60) {
+            clearInterval(interval);
+            setInterval(function() { syncReactDropdowns(); updateVisibility(); }, 500);
+        }
+    }, 1000);
+})();
+</script>
+
+<script>
+// ===== Prompt Textarea Auto-Newline Patch =====
+// When pasting into the prompt textarea that already has content,
+// auto-prepend a newline so the new prompt goes on a new line (#2, #3, etc.)
+// instead of merging with the previous prompt on the same line.
+(function() {
+    function patchTextareas() {
+        var textareas = document.querySelectorAll('textarea');
+        for (var i = 0; i < textareas.length; i++) {
+            var ta = textareas[i];
+            if (ta.__agPastePatch) continue;
+            // Only patch prompt textareas (not log/output ones)
+            var placeholder = (ta.placeholder || '').toLowerCase();
+            if (placeholder.indexOf('prompt') >= 0 || placeholder.indexOf('m') >= 0 || ta.rows >= 3) {
+                ta.__agPastePatch = true;
+                ta.addEventListener('paste', function(e) {
+                    var existing = this.value;
+                    if (existing && existing.trim().length > 0) {
+                        // Only add newline if cursor is at the end and last char isn't newline
+                        var cursorAtEnd = this.selectionStart === existing.length;
+                        var endsWithNewline = existing.endsWith('\n');
+                        if (cursorAtEnd && !endsWithNewline) {
+                            // Insert newline before the pasted content
+                            e.preventDefault();
+                            var pastedText = (e.clipboardData || window.clipboardData).getData('text');
+                            var newValue = existing + '\n' + pastedText;
+                            // Use native input setter to trigger React state update
+                            var nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+                                window.HTMLTextAreaElement.prototype, 'value'
+                            ).set;
+                            nativeInputValueSetter.call(this, newValue);
+                            // Dispatch input event to sync React state
+                            this.dispatchEvent(new Event('input', { bubbles: true }));
+                            this.dispatchEvent(new Event('change', { bubbles: true }));
+                            // Move cursor to end
+                            this.selectionStart = this.selectionEnd = newValue.length;
+                        }
+                    }
+                });
+            }
+        }
+    }
+    // Run periodically to catch dynamically created textareas
+    setInterval(patchTextareas, 2000);
+    // Also run on focus events
+    document.addEventListener('focusin', function(e) {
+        if (e.target && e.target.tagName === 'TEXTAREA') {
+            setTimeout(patchTextareas, 100);
+        }
+    });
+})();
+</script>
+
+<script>
+// ===== I2V Clean UI v11 — Prompt Cards + Editable =====
+(function() {
+    var css = document.createElement('style');
+    css.textContent = [
+      '/* === HIDE === */',
+      '.ref-fill-panel > h3:first-child, .ref-fill-panel > .panel-title:first-child { display: none !important; }',
+      '.ref-fill-panel > div:has(input[placeholder*="file prompt"]), .ref-fill-panel > div:has(input[placeholder*="batch file"]) { display: none !important; }',
+      '.file-prompt-row, .batch-file-row { display: none !important; }',
+      '.ref-fill-step { display: none !important; }',
+
+      '/* === UNIFIED PANEL === */',
+      '.input-panel { padding: 8px 10px !important; margin-bottom: 0 !important; border-bottom-left-radius: 0 !important; border-bottom-right-radius: 0 !important; }',
+      '.ref-fill-panel { margin-top: 0 !important; padding-top: 4px !important; border-top-left-radius: 0 !important; border-top-right-radius: 0 !important; border-top: 1px solid rgba(0,229,255,0.08) !important; }',
+
+      '/* Hide the raw textarea — replaced by prompt cards */',
+      '.ref-fill-bulk { display: none !important; }',
+      '.ref-prompt-count { font-size: 10px !important; margin: 2px 0 !important; }',
+
+      '/* === PROMPT CARDS — replaces raw textarea === */',
+      '.ag-cards { display: flex; flex-direction: column; gap: 4px; max-height: 200px; overflow-y: auto; padding: 2px; }',
+      '.ag-card { display: flex; align-items: flex-start; gap: 6px; padding: 6px 8px; background: rgba(9,20,39,0.7); border: 1px solid rgba(148,163,184,0.15); border-radius: 6px; transition: all 0.2s; }',
+      '.ag-card:hover { border-color: rgba(0,229,255,0.25); }',
+      '.ag-card:focus-within { border-color: rgba(0,229,255,0.5); box-shadow: 0 0 8px rgba(0,229,255,0.1); }',
+      '.ag-card-num { display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 20px; border-radius: 5px; background: rgba(0,229,255,0.12); color: #00e5ff; font-size: 10px; font-weight: 700; flex-shrink: 0; margin-top: 2px; }',
+      '.ag-card-text { flex: 1; min-height: 20px; font-size: 11px; line-height: 1.4; color: var(--text-primary, #bcd3f5); outline: none; word-break: break-word; white-space: pre-wrap; cursor: text; }',
+      '.ag-card-del { background: none; border: none; color: rgba(255,82,82,0.4); cursor: pointer; font-size: 14px; padding: 0 2px; line-height: 1; flex-shrink: 0; transition: color 0.2s; }',
+      '.ag-card-del:hover { color: #ff5252; }',
+      '.ag-card-add { display: flex; align-items: center; justify-content: center; padding: 4px; border: 1px dashed rgba(0,229,255,0.15); border-radius: 6px; color: rgba(0,229,255,0.4); font-size: 10px; cursor: pointer; transition: all 0.2s; }',
+      '.ag-card-add:hover { border-color: rgba(0,229,255,0.4); color: #00e5ff; background: rgba(0,229,255,0.04); }',
+
+      '/* === TOOLBAR === */',
+      '.ag-toolbar { display: flex; align-items: center; gap: 4px; padding: 4px 0; margin: 2px 0; flex-wrap: wrap; }',
+      '.ag-toolbar-btn { padding: 4px 10px; font-size: 10px; font-weight: 600; border: 1px solid rgba(0,229,255,0.2); border-radius: 6px; background: rgba(0,229,255,0.06); color: #00e5ff; cursor: pointer; transition: all 0.2s; white-space: nowrap; }',
+      '.ag-toolbar-btn:hover { background: rgba(0,229,255,0.15); }',
+      '.ag-toolbar-btn.green { background: rgba(0,230,118,0.1); color: #00e676; border-color: rgba(0,230,118,0.25); }',
+      '.ag-toolbar-btn.green:hover { background: rgba(0,230,118,0.2); }',
+      '.ag-toolbar-btn.red { background: rgba(255,82,82,0.08); color: #ff5252; border-color: rgba(255,82,82,0.2); }',
+      '.ag-toolbar-btn.red:hover { background: rgba(255,82,82,0.15); }',
+      '.ag-toolbar-sep { width: 1px; height: 16px; background: rgba(255,255,255,0.08); margin: 0 2px; }',
+      '.i2v-button-row { display: none !important; }',
+      '.ref-fill-actions { display: none !important; }',
+
+      '/* === FILL ROWS — better prompt textarea sizing === */',
+      '.ref-fill-row { padding: 5px 8px !important; gap: 6px !important; min-height: 44px !important; border: 1px solid rgba(255,255,255,0.04) !important; border-radius: 6px !important; margin-bottom: 3px !important; }',
+      '.ref-fill-row:hover { border-color: rgba(0,229,255,0.15) !important; }',
+      '.ref-fill-row .ref-fill-prompt { min-height: 36px !important; max-height: 80px !important; font-size: 10px !important; line-height: 1.35 !important; resize: vertical !important; overflow-y: auto !important; }',
+      '.ref-fill-row .ref-fill-remove, .ref-fill-row > button:last-child, .ref-fill-row > .action-btn { display: none !important; }',
+      '.ref-fill-row:has(input[type="checkbox"]:checked) { background: rgba(0,229,255,0.06) !important; border-color: rgba(0,229,255,0.2) !important; }',
+      '.config-title, h3:has(+ .config-group), .panel-section-title { font-size: 11px !important; margin: 4px 0 2px !important; }',
+
+      '/* === BUTTONS === */',
+      '.ag-run-btn, .ag-del-result { border: none !important; font-size: 12px !important; cursor: pointer !important; padding: 3px 7px !important; border-radius: 6px !important; font-weight: 700 !important; transition: all 0.2s !important; line-height: 1 !important; min-width: 24px !important; }',
+      '.ag-run-btn { background: linear-gradient(135deg, #00c853, #00e676) !important; color: #000 !important; }',
+      '.ag-run-btn:hover { transform: scale(1.15) !important; box-shadow: 0 2px 10px rgba(0,200,83,0.4) !important; }',
+      '.ag-run-btn.running { background: linear-gradient(135deg,#ff6d00,#ff9100) !important; animation: agp 1s infinite !important; }',
+      '.ag-del-result { background: rgba(255,82,82,0.1) !important; color: #ff5252 !important; margin-left: 2px !important; }',
+      '.ag-del-result:hover { background: rgba(255,82,82,0.25) !important; }',
+      '@keyframes agp { 0%,100%{opacity:1} 50%{opacity:0.5} }'
+    ].join('\n');
+    document.head.appendChild(css);
+
+    // React-safe textarea setter
+    var nativeSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
+    function setTA(ta, v) { nativeSetter.call(ta, v); ta.dispatchEvent(new Event('input', {bubbles:true})); ta.dispatchEvent(new Event('change', {bubbles:true})); }
+    function getTA() { return document.querySelector('.ref-fill-bulk') || document.querySelector('.input-panel textarea'); }
+
+    // === PROMPT CARDS — visual replacement for textarea ===
+    var _lastTAVal = '';
+    function buildPromptCards() {
+        var ta = getTA();
+        if (!ta) return;
+        var val = ta.value || '';
+        var container = document.getElementById('ag-cards');
+        // Create container if missing
+        if (!container) {
+            container = document.createElement('div');
+            container.id = 'ag-cards';
+            container.className = 'ag-cards';
+            ta.parentElement.insertBefore(container, ta);
+        }
+        // Only rebuild if textarea content changed (and not from our own edit)
+        if (val === _lastTAVal && container.children.length > 0) return;
+        _lastTAVal = val;
+        var prompts = val.split('\n');
+        container.innerHTML = '';
+        prompts.forEach(function(p, idx) {
+            if (p.trim() === '' && idx === prompts.length - 1) return; // skip trailing empty
+            var card = document.createElement('div');
+            card.className = 'ag-card';
+            // Number badge
+            var num = document.createElement('span');
+            num.className = 'ag-card-num';
+            num.textContent = idx + 1;
+            card.appendChild(num);
+            // Editable text
+            var text = document.createElement('div');
+            text.className = 'ag-card-text';
+            text.contentEditable = 'true';
+            text.textContent = p;
+            text.setAttribute('data-idx', idx);
+            text.addEventListener('blur', function() {
+                var i = parseInt(this.getAttribute('data-idx'));
+                var lines = (ta.value || '').split('\n');
+                lines[i] = this.textContent;
+                _lastTAVal = lines.join('\n');
+                setTA(ta, _lastTAVal);
+            });
+            text.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); this.blur(); }
+            });
+            text.addEventListener('paste', function(e) {
+                e.preventDefault();
+                var paste = (e.clipboardData || window.clipboardData).getData('text');
+                document.execCommand('insertText', false, paste);
+            });
+            card.appendChild(text);
+            // Delete button
+            var del = document.createElement('button');
+            del.className = 'ag-card-del';
+            del.innerHTML = '&times;';
+            del.title = 'Xóa prompt #' + (idx + 1);
+            del.addEventListener('click', function() {
+                var lines = (ta.value || '').split('\n');
+                lines.splice(idx, 1);
+                _lastTAVal = lines.join('\n');
+                setTA(ta, _lastTAVal);
+                buildPromptCards(); // rebuild immediately
+            });
+            card.appendChild(del);
+            container.appendChild(card);
+        });
+        // Add new prompt button
+        var addCard = document.createElement('div');
+        addCard.className = 'ag-card-add';
+        addCard.textContent = '+ Thêm prompt';
+        addCard.addEventListener('click', function() {
+            var lines = (ta.value || '').split('\n');
+            lines.push('');
+            _lastTAVal = lines.join('\n');
+            setTA(ta, _lastTAVal);
+            _lastTAVal = ''; // force rebuild
+            buildPromptCards();
+            // Focus the new card
+            setTimeout(function() {
+                var cards = container.querySelectorAll('.ag-card-text');
+                if (cards.length > 0) cards[cards.length - 1].focus();
+            }, 50);
+        });
+        container.appendChild(addCard);
+    }
+
+    // Build toolbar
+    function buildToolbar() {
+        if (document.getElementById('ag-toolbar')) return;
+        var panel = document.querySelector('.ref-fill-panel');
+        if (!panel) return;
+        var btns = Array.from(panel.querySelectorAll('button'));
+        var addImgBtn = btns.find(function(b) { var t = b.textContent||''; return t.indexOf('nh') >= 0 && t.indexOf('folder') < 0 && t.indexOf('Fill') < 0; });
+        var addFolderBtn = btns.find(function(b) { return (b.textContent||'').indexOf('folder') >= 0; });
+        var fillBtn = btns.find(function(b) { return (b.textContent||'').indexOf('Fill') >= 0; });
+        var clearBtn = btns.find(function(b) { var t = (b.textContent||'').trim(); return t.length <= 4 && t.indexOf('a') >= 0 && t !== 'Fill'; });
+        var toolbar = document.createElement('div');
+        toolbar.id = 'ag-toolbar'; toolbar.className = 'ag-toolbar';
+        function addBtn(text, cls, handler) { var b = document.createElement('button'); b.className = 'ag-toolbar-btn' + (cls ? ' ' + cls : ''); b.textContent = text; b.addEventListener('click', handler); toolbar.appendChild(b); }
+        function addSep() { var s = document.createElement('div'); s.className = 'ag-toolbar-sep'; toolbar.appendChild(s); }
+        if (addImgBtn) addBtn('\uD83D\uDCF7 \u1EA2nh', '', function() { addImgBtn.click(); });
+        if (addFolderBtn) addBtn('\uD83D\uDCC1 Folder', '', function() { addFolderBtn.click(); });
+        addSep();
+        if (fillBtn) addBtn('\u2705 Fill', 'green', function() { fillBtn.click(); });
+        if (clearBtn) addBtn('\uD83D\uDDD1 X\u00F3a', 'red', function() { clearBtn.click(); });
+        var fillTable = panel.querySelector('.ref-fill-table');
+        if (fillTable) fillTable.parentElement.insertBefore(toolbar, fillTable);
+        else panel.insertBefore(toolbar, panel.firstChild);
+    }
+
+    // Cleanup
+    function cleanupUI() {
+        document.querySelectorAll('.panel-title, .input-panel > h3').forEach(function(el) {
+            if ((el.textContent||'').indexOf('File prompt') >= 0) el.style.display = 'none';
+        });
+        buildToolbar();
+        buildPromptCards();
+    }
+
+    // Per-row Run + Delete
+    function injectRunButtons() {
+        document.querySelectorAll('table tbody tr').forEach(function(row, idx) {
+            if (row.querySelector('.ag-run-btn')) return;
+            var td = row.querySelector('td:last-child'); if (!td) return;
+            var div = td.querySelector('.action-icons') || td;
+            var btn = document.createElement('button');
+            btn.className = 'ag-run-btn'; btn.textContent = '\u25B6'; btn.title = 'Run #' + (idx+1);
+            btn.setAttribute('data-idx', idx);
+            btn.addEventListener('click', function(e) {
+                e.preventDefault(); e.stopPropagation();
+                window.__selectedRowIndices = [parseInt(this.getAttribute('data-idx'))];
+                window.__selectiveMode = true;
+                var s = findStart();
+                if (s) { this.classList.add('running'); this.textContent = '\u23F3'; var b = this; s.click();
+                    setTimeout(function() { window.__selectiveMode = false; window.__selectedRowIndices = null; b.classList.remove('running'); b.textContent = '\u25B6'; }, 3000);
+                }
+            });
+            div.insertBefore(btn, div.firstChild);
+            var del = document.createElement('button');
+            del.className = 'ag-del-result'; del.textContent = '\u2715'; del.title = 'Remove #' + (idx+1);
+            del.addEventListener('click', function(e) {
+                e.preventDefault(); e.stopPropagation();
+                row.style.transition = 'opacity 0.3s'; row.style.opacity = '0';
+                setTimeout(function() { row.remove(); }, 350);
+            });
+            div.appendChild(del);
+        });
+    }
+    function findStart() {
+        var btns = document.querySelectorAll('button');
+        for (var i = 0; i < btns.length; i++) { var t = (btns[i].textContent||'').trim().toLowerCase(); if (t.indexOf('start') >= 0 && (btns[i].className.indexOf('control-btn') >= 0 || btns[i].className.indexOf('start') >= 0)) return btns[i]; }
+        return null;
+    }
+
+    // Hook API
+    function hookAPIs() {
+        if (!window.electronAPI || window.__hooked) return;
+        var api = window.electronAPI;
+        ['i2v','video','image'].forEach(function(svc) {
+            if (api[svc] && api[svc].generate && !api[svc]._h) {
+                var orig = api[svc].generate; api[svc]._h = true;
+                api[svc].generate = function(p) {
+                    if (window.__selectiveMode && window.__selectedRowIndices) {
+                        var items = p.items || p.prompts;
+                        if (items) { var sel = []; window.__selectedRowIndices.forEach(function(i) { if (items[i]) sel.push(items[i]); }); if (sel.length > 0) { if (p.items) p.items = sel; else p.prompts = sel; } }
+                    }
+                    return orig(p);
+                };
+            }
+        });
+        window.__hooked = true;
+    }
+
+    setInterval(function() { cleanupUI(); injectRunButtons(); hookAPIs(); }, 1500);
+})();
+</script>
+
+
+
+
+
+<style id="ag-tracker-css">
+
+#ag-tracker{position:fixed;bottom:16px;right:16px;z-index:9999;width:420px;max-height:440px;background:rgba(20,20,30,.95);border:1px solid rgba(0,229,255,.15);border-radius:12px;display:flex;flex-direction:column;box-shadow:0 8px 32px rgba(0,0,0,.5);backdrop-filter:blur(12px);font-family:'Inter',sans-serif;font-size:12px;color:#e0e0e0;overflow:hidden;transition:all .3s}
+#ag-tracker.collapsed #ag-tracker-body,#ag-tracker.collapsed #ag-tracker-summary{display:none}
+#ag-tracker-header{padding:10px 14px;display:flex;justify-content:space-between;align-items:center;cursor:pointer;border-bottom:1px solid rgba(255,255,255,.08);background:rgba(0,229,255,.04)}
+#ag-tracker-header:hover{background:rgba(0,229,255,.08)}
+.ag-badge{background:#00e5ff;color:#000;border-radius:10px;padding:1px 8px;font-size:11px;font-weight:700}
+.ag-toggle{color:#888;font-size:10px}
+#ag-tracker-body{overflow-y:auto;max-height:300px}
+#ag-tracker-summary{padding:6px 14px;display:flex;gap:12px;font-size:11px;border-top:1px solid rgba(255,255,255,.06);background:rgba(0,0,0,.2);align-items:center}
+.ag-job-row{display:flex;align-items:center;gap:5px;padding:4px 10px 4px 14px;border-bottom:1px solid rgba(255,255,255,.04);transition:background .2s}
+.ag-job-row:hover{background:rgba(255,255,255,.04)}
+.ag-job-row.done{opacity:.7}
+.ag-job-row.error{background:rgba(255,50,50,.06)}
+.ag-idx{font-size:11px;color:#888;min-width:32px;white-space:nowrap}
+.ag-prompt{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px}
+.ag-bar-wrap{width:50px;height:5px;background:rgba(255,255,255,.08);border-radius:3px;overflow:hidden}
+.ag-bar-fill{height:100%;border-radius:3px;transition:width .5s;background:linear-gradient(90deg,#00e5ff,#76ff03)}
+.ag-job-row.error .ag-bar-fill{background:#ff5252}
+.ag-status{font-size:12px;min-width:18px;text-align:center}
+.ag-cancel-btn{background:#ff5252;color:#fff;border:none;border-radius:6px;padding:3px 10px;font-size:10px;font-weight:600;cursor:pointer;white-space:nowrap;transition:all .2s}
+.ag-cancel-btn:hover{background:#ff1744;transform:scale(1.05)}
+.ag-cancel-btn:active{transform:scale(.95)}
+.ag-x-btn{background:none;border:1px solid rgba(255,82,82,.5);color:#ff5252;border-radius:4px;width:18px;height:18px;font-size:11px;line-height:16px;text-align:center;cursor:pointer;padding:0;transition:all .15s;flex-shrink:0}
+.ag-x-btn:hover{background:#ff5252;color:#fff;border-color:#ff5252;transform:scale(1.1)}
+.ag-clear-btn{background:none;border:1px solid rgba(255,255,255,.15);color:#888;border-radius:6px;padding:2px 8px;font-size:10px;cursor:pointer;transition:all .2s;margin-left:4px}
+.ag-clear-btn:hover{border-color:#ff5252;color:#ff5252}
+</style>
+<script>
+// ===== PROGRESS TRACKER v9 — stacked batches, per-job cancel, cumulative per-type numbering =====
+(function(){
+var bc=0,cBid=null,cBtype=null,jobs=new Map(),panel=null,collapsed=false;
+var cancelledKeys=new Set();
+window.__cancelledJobKeys=cancelledKeys;
+function mkPanel(){
+if(document.getElementById('ag-tracker'))return;
+panel=document.createElement('div');panel.id='ag-tracker';
+var h=document.createElement('div');h.id='ag-tracker-header';
+h.innerHTML='<span>\u{1F4CA} Ti\u1EBFn tr\u00ECnh</span><div style="display:flex;align-items:center;gap:8px"><span class="ag-badge" id="ag-tracker-count">0</span><span class="ag-toggle">\u25BC</span></div>';
+var b=document.createElement('div');b.id='ag-tracker-body';
+var s=document.createElement('div');s.id='ag-tracker-summary';
+s.innerHTML='<span>\u2705 <b id="ag-s-done">0</b></span><span>\u274C <b id="ag-s-err">0</b></span><span>\u{1F504} <b id="ag-s-run">0</b></span><span>\u23F3 <b id="ag-s-wait">0</b></span><span style="flex:1"></span><button class="ag-clear-btn" id="ag-clear-btn" title="X\u00F3a l\u1ECBch s\u1EED">\u{1F5D1}</button><button class="ag-cancel-btn" id="ag-cancel-btn" title="D\u1EEBng t\u1EA5t c\u1EA3">\u26D4 D\u1EEBng</button>';
+panel.appendChild(h);panel.appendChild(b);panel.appendChild(s);
+document.body.appendChild(panel);
+h.onclick=function(e){if(e.target.closest('.ag-cancel-btn')||e.target.closest('.ag-x-btn')||e.target.closest('.ag-clear-btn'))return;collapsed=!collapsed;panel.classList.toggle('collapsed',collapsed)};
+document.getElementById('ag-cancel-btn').onclick=function(e){e.stopPropagation();cancelAll()};
+document.getElementById('ag-clear-btn').onclick=function(e){e.stopPropagation();clearHistory()};
+b.onclick=function(e){var btn=e.target.closest('.ag-x-btn');if(!btn)return;e.stopPropagation();var k=btn.getAttribute('data-jk');if(k)cancelJob(k)};
+}
+function cancelJob(key){
+var j=jobs.get(key);
+if(!j||j.st==='done'||j.st==='error')return;
+j.st='error';j.err='D\u1EEBng b\u1EDFi ng\u01B0\u1EDDi d\u00F9ng';if(!j.t1)j.t1=Date.now();
+cancelledKeys.add(key);
+render();
+}
+function cancelAll(){
+if(!window.electronAPI)return;
+var api=window.electronAPI;
+if(api.image&&api.image.cancel)api.image.cancel();
+if(api.video&&api.video.cancel)api.video.cancel();
+if(api.i2v&&api.i2v.cancel)api.i2v.cancel();
+if(api.refimg&&api.refimg.cancel)api.refimg.cancel();
+for(var e of jobs.entries()){var k=e[0],j=e[1];
+if(j.st==='running'||j.st==='pending'){j.st='error';j.err='D\u1EEBng b\u1EDFi ng\u01B0\u1EDDi d\u00F9ng';if(!j.t1)j.t1=Date.now();cancelledKeys.add(k)}
+}
+render();
+}
+function clearHistory(){
+// Remove only completed (done/error) jobs, keep running/pending
+var toRemove=[];
+for(var e of jobs.entries()){if(e[1].st==='done'||e[1].st==='error')toRemove.push(e[0])}
+toRemove.forEach(function(k){jobs.delete(k)});
+cancelledKeys.clear();
+render();
+}
+function newB(t){bc++;cBid='B'+bc;cBtype=t;}
+function onProg(ev){
+if(!ev||!ev.jobId)return;
+var t=ev.jobId,d=ev.progress||{},gi=d.globalIdx!=null?d.globalIdx:0;
+var bb=d.batchId||null;
+// Always create new batch when batchId changes or new job type
+if(bb&&bb!==cBid){cBid=bb;cBtype=t;bc++}
+else if(!cBid){newB(t)}
+else if(t!==cBtype){newB(t)}
+else if(gi===0&&!bb){var ex=jobs.get(cBid+':'+t+':0');if(ex&&(ex.st==='done'||ex.st==='error'))newB(t)}
+var k=cBid+':'+t+':'+gi;
+if(cancelledKeys.has(k))return;
+if(!jobs.has(k))jobs.set(k,{bid:cBid,type:t,gi:gi,pr:getPr(d),pct:0,st:'pending',err:null,t0:Date.now(),t1:null,key:k,seq:Date.now()+Math.random()});
+var j=jobs.get(k);
+var p=typeof d.progress==='number'?d.progress:j.pct;
+j.pct=Math.max(j.pct,p);
+if(d.prompt&&typeof d.prompt==='string')j.pr=d.prompt;
+if(d.result){j.st=d.result.success?'done':'error';j.pct=100;if(d.result.error)j.err=d.result.error;if(d.result.title)j.pr=d.result.title;if(!j.t1)j.t1=Date.now()}
+else if(p>0&&p<100)j.st='running';
+else if(p>=100){if(j.st!=='error')j.st='done';if(!j.t1)j.t1=Date.now()}
+else if(j.st==='pending')j.st='running';
+render();
+}
+function getPr(d){if(typeof d.prompt==='string')return d.prompt;if(d.item&&d.item.prompt)return d.item.prompt;if(d.item&&d.item.imagePath)return d.item.imagePath.split(/[\\\/]/).pop();return ''}
+function ft(ms){if(!ms||ms<=0)return'';var s=Math.round(ms/1000);if(s<60)return s+'s';return Math.floor(s/60)+'m'+(s%60>0?(s%60)+'s':'')}
+var TL={image:'\u{1F5BC}\uFE0F Img',video:'\u{1F3AC} Vid',i2v:'\u{1F4F8} I2V',refimg:'\u{1F3A8} Ref'};
+var TI={image:'\u{1F5BC}',video:'\u{1F3AC}',i2v:'\u{1F4F8}',refimg:'\u{1F3A8}'};
+var SI={pending:'\u23F3',running:'\u{1F504}',done:'\u2705',error:'\u274C'};
+function render(){
+mkPanel();var body=document.getElementById('ag-tracker-body');if(!body)return;
+// Compute cumulative per-type number based on insertion order (seq).
+// This way #1, #2, #3... continue across batches of the same type.
+var _byType={};for(var _j of jobs.values()){if(!_byType[_j.type])_byType[_j.type]=[];_byType[_j.type].push(_j)}
+for(var _t in _byType){_byType[_t].sort(function(a,b){return a.seq-b.seq}).forEach(function(jj,ii){jj.absNum=ii+1})}
+var bm=new Map();for(var j of jobs.values()){if(!bm.has(j.bid))bm.set(j.bid,[]);bm.get(j.bid).push(j)}
+var dn=0,er=0,rn=0,wt=0,html='';
+var bids=Array.from(bm.keys()).reverse();
+for(var bi=0;bi<bids.length;bi++){
+var bid=bids[bi],bj=bm.get(bid).sort(function(a,b){return a.gi-b.gi});
+var bt=bj[0]?bj[0].type:'',lb=TL[bt]||bt,ic=bid===cBid;
+var bd=bj.filter(function(x){return x.st==='done'}).length;
+var be=bj.filter(function(x){return x.st==='error'}).length;
+html+='<div style="padding:4px 14px;font-size:11px;color:#888;border-bottom:1px solid rgba(255,255,255,.08);display:flex;justify-content:space-between;'+(ic?'background:rgba(0,229,255,.06)':'opacity:.65')+'"><span>'+lb+(ic?' <span style="color:#00e5ff">\u25CF LIVE</span>':'')+' </span><span style="font-size:10px">'+bd+'\u2705 '+be+'\u274C / '+bj.length+'</span></div>';
+for(var ji=0;ji<bj.length;ji++){
+var j=bj[ji],p=Math.min(100,Math.max(0,j.pct)),pr=(j.pr||'').substring(0,30),ti=TI[j.type]||'';
+var el=j.st==='running'?ft(Date.now()-j.t0):(j.t1?ft(j.t1-j.t0):'');
+var canCancel=(j.st==='running'||j.st==='pending');
+var xBtn=canCancel?'<button class="ag-x-btn" data-jk="'+j.key+'" title="D\u1EEBng job n\u00E0y">\u00D7</button>':'<span style="width:18px"></span>';
+html+='<div class="ag-job-row '+j.st+'" title="'+(j.err||j.pr||'').replace(/"/g,'&quot;').substring(0,300)+'">'
++'<span class="ag-idx">'+ti+'#'+(j.absNum||j.gi+1)+'</span>'
++'<span class="ag-prompt">'+pr+'</span>'
++'<span style="font-size:10px;color:'+(j.st==='running'?'#00e5ff':'#888')+';min-width:34px;text-align:right;font-weight:'+(j.st==='running'?'600':'400')+'">'+el+'</span>'
++'<span class="ag-bar-wrap"><span class="ag-bar-fill" style="width:'+p+'%"></span></span>'
++'<span class="ag-status">'+(SI[j.st]||'\u23F3')+'</span>'
++xBtn+'</div>';
+if(j.st==='done')dn++;else if(j.st==='error')er++;else if(j.st==='running')rn++;else wt++;
+}}
+body.innerHTML=html;
+var rr=body.querySelector('.ag-job-row.running');if(rr)rr.scrollIntoView({block:'nearest',behavior:'smooth'});
+document.getElementById('ag-tracker-count').textContent=jobs.size;
+document.getElementById('ag-s-done').textContent=dn;
+document.getElementById('ag-s-err').textContent=er;
+document.getElementById('ag-s-run').textContent=rn;
+document.getElementById('ag-s-wait').textContent=wt;
+var cb=document.getElementById('ag-cancel-btn');
+if(cb)cb.style.display=(rn+wt)>0?'inline-block':'none';
+panel.style.display=jobs.size>0?'flex':'none';
+}
+setInterval(function(){var hr=false;for(var j of jobs.values()){if(j.st==='running'){hr=true;break}}if(hr)render()},1000);
+function hook(){if(!window.electronAPI)return false;if(window.__tH)return true;if(window.electronAPI.onProgress)window.electronAPI.onProgress(onProg);window.__tH=true;return true}
+window.__trackerReset=function(){/* no-op: keep history, new batch auto-separates */};
+var ha=0,hi=setInterval(function(){if(hook()||++ha>60)clearInterval(hi)},1000);
+})();
+</script>
+
+<script>
+// ===== PROMPT TEXTAREA AUTO-NEWLINE PATCH =====
+// Fix: when user pastes (or types after focus) a new prompt at the end of
+// an existing prompt list that doesn't end with a newline, the new prompt
+// gets concatenated onto the last existing prompt because the textarea
+// uses '\n' as the per-prompt separator. This patch auto-inserts a
+// newline before pasted text so new prompts always start on their own
+// line. Only triggers when pasting at the very end of non-empty content
+// that doesn't already end with a newline — never modifies edits that
+// happen in the middle of the textarea.
+(function(){
+  var nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+  function applyValue(ta, v){
+    nativeSetter.call(ta, v);
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+  function fix(ta){
+    if (ta.__pmFix) return;
+    ta.__pmFix = true;
+    ta.addEventListener('paste', function(e){
+      var v = ta.value || '';
+      var s = ta.selectionStart, en = ta.selectionEnd;
+      // Only auto-prepend newline when caret is at end of non-empty content
+      // and selection is collapsed (i.e. cursor at end, no replacement).
+      if (s !== en) return;
+      if (s !== v.length) return;
+      if (!v) return;
+      if (v.endsWith('\n')) return;
+      var cd = e.clipboardData || window.clipboardData;
+      if (!cd) return;
+      var pasted = cd.getData('text');
+      if (!pasted) return;
+      e.preventDefault();
+      // Insert a separator newline so the pasted block starts on a new line.
+      // If the pasted text already starts with whitespace/newlines, normalise.
+      var sep = pasted.startsWith('\n') ? '' : '\n';
+      applyValue(ta, v + sep + pasted);
+      // Move caret to end of pasted content.
+      var newPos = (v + sep + pasted).length;
+      ta.setSelectionRange(newPos, newPos);
+    });
+  }
+  function scan(){
+    // Match all prompt textareas (image, i2v, ref-fill all use .prompt-textarea).
+    var tas = document.querySelectorAll('textarea.prompt-textarea');
+    for (var i = 0; i < tas.length; i++) fix(tas[i]);
+  }
+  if (document.body) scan();
+  document.addEventListener('DOMContentLoaded', scan);
+  // React rerenders may swap textarea instances, so observe the tree.
+  try {
+    new MutationObserver(scan).observe(document.documentElement, { childList: true, subtree: true });
+  } catch (_) {}
+})();
+</script>
+</body>
+
+</html>
+
